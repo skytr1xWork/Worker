@@ -387,11 +387,26 @@ def _wrap_in_readable_html_template(body_html: str, title: str = "Докумен
     .log-debug {{ background: #f1f5f9; color: #475569; }}
     .log-row {{ font-family: monospace; font-size: 0.9em; padding: 6px 0; border-bottom: 1px solid var(--border-color); }}
     .log-ts {{ color: var(--text-secondary); margin-right: 8px; }}
+    .document-footer {{
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border-color);
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      text-align: center;
+    }}
+    .document-footer a {{
+      color: var(--accent-color);
+      font-weight: 500;
+    }}
   </style>
 </head>
 <body>
   <div class="document-card">
     {body_html}
+    <footer class="document-footer">
+      сделано благодаря лучшему, красивому, офигенному, невероятному <a href="https://t.me/skytr1xHelper_bot" target="_blank" rel="noopener">@skytr1xHelper_bot</a>
+    </footer>
   </div>
 </body>
 </html>"""
