@@ -1,4 +1,5 @@
 import csv
+import html
 import io
 import json
 import os
@@ -86,16 +87,16 @@ DOCUMENT_MIME_TYPES = {
 }
 
 DOCUMENT_TARGETS = {
-    "DOCX": ["MD", "TXT", "HTML", "DAT", "LOG"],
-    "MD": ["DOCX", "TXT", "HTML", "DAT", "LOG"],
-    "TXT": ["DOCX", "MD", "HTML", "DAT", "LOG", "CSV", "JSON"],
-    "DAT": ["TXT", "DOCX", "MD", "HTML", "LOG", "CSV", "JSON"],
-    "LOG": ["TXT", "DOCX", "MD", "HTML", "DAT"],
-    "CSV": ["JSON", "TSV", "MD", "DOCX", "TXT", "HTML", "DAT"],
-    "TSV": ["CSV", "JSON", "MD", "DOCX", "TXT", "HTML", "DAT"],
-    "JSON": ["CSV", "TXT", "MD", "DOCX", "DAT", "HTML"],
-    "XML": ["JSON", "TXT", "MD", "DOCX", "DAT", "HTML"],
-    "HTML": ["MD", "TXT", "DOCX", "DAT", "LOG"],
+    "DOCX": ["MD", "TXT", "HTML", "JSON", "DAT", "LOG"],
+    "MD": ["DOCX", "HTML", "JSON", "TXT", "DAT", "LOG"],
+    "TXT": ["JSON", "HTML", "DOCX", "MD", "DAT", "LOG", "CSV"],
+    "DAT": ["JSON", "HTML", "TXT", "DOCX", "MD", "LOG", "CSV"],
+    "LOG": ["JSON", "HTML", "TXT", "DOCX", "MD", "DAT"],
+    "CSV": ["JSON", "HTML", "MD", "DOCX", "TSV", "TXT", "DAT"],
+    "TSV": ["JSON", "HTML", "CSV", "MD", "DOCX", "TXT", "DAT"],
+    "JSON": ["CSV", "HTML", "TXT", "MD", "DOCX", "DAT"],
+    "XML": ["JSON", "HTML", "TXT", "MD", "DOCX", "DAT"],
+    "HTML": ["MD", "TXT", "DOCX", "JSON", "DAT", "LOG"],
 }
 
 
@@ -258,7 +259,485 @@ def convert_image(input_bytes: bytes, target_format: str) -> tuple[bytes, str]:
 
 
 # ==========================================
-# Document / Text conversion utilities
+# Beautiful Responsive HTML Page Generator
+# ==========================================
+
+def _wrap_in_readable_html_template(body_html: str, title: str = "Документ") -> str:
+    """Wraps HTML content in a modern, reader-friendly, responsive styling."""
+    return f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{html.escape(title)}</title>
+  <style>
+    :root {{
+      --bg-color: #f8fafc;
+      --card-bg: #ffffff;
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --border-color: #e2e8f0;
+      --accent-color: #2563eb;
+      --code-bg: #f1f5f9;
+      --table-header-bg: #f8fafc;
+      --table-stripe-bg: #f8fafc;
+    }}
+    @media (prefers-color-scheme: dark) {{
+      :root {{
+        --bg-color: #0f172a;
+        --card-bg: #1e293b;
+        --text-primary: #f8fafc;
+        --text-secondary: #94a3b8;
+        --border-color: #334155;
+        --accent-color: #38bdf8;
+        --code-bg: #0f172a;
+        --table-header-bg: #0f172a;
+        --table-stripe-bg: #162032;
+      }}
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-primary);
+      line-height: 1.75;
+      margin: 0;
+      padding: 40px 16px;
+      -webkit-font-smoothing: antialiased;
+    }}
+    .document-card {{
+      max-width: 820px;
+      margin: 0 auto;
+      background: var(--card-bg);
+      padding: 48px;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+      border: 1px solid var(--border-color);
+    }}
+    @media (max-width: 640px) {{
+      .document-card {{ padding: 24px 16px; }}
+    }}
+    h1, h2, h3, h4, h5, h6 {{
+      color: var(--text-primary);
+      font-weight: 600;
+      margin-top: 1.5em;
+      margin-bottom: 0.6em;
+      line-height: 1.3;
+    }}
+    h1 {{ font-size: 2rem; border-bottom: 2px solid var(--border-color); padding-bottom: 0.3em; margin-top: 0; }}
+    h2 {{ font-size: 1.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.25em; }}
+    h3 {{ font-size: 1.25rem; }}
+    p {{ margin-top: 0; margin-bottom: 1.2em; color: var(--text-primary); }}
+    a {{ color: var(--accent-color); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    ul, ol {{ margin-top: 0; margin-bottom: 1.2em; padding-left: 24px; }}
+    li {{ margin-bottom: 0.4em; }}
+    pre, code {{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.9em;
+      background-color: var(--code-bg);
+      border-radius: 6px;
+    }}
+    code {{ padding: 0.2em 0.4em; }}
+    pre {{
+      padding: 16px;
+      overflow-x: auto;
+      border: 1px solid var(--border-color);
+      line-height: 1.5;
+    }}
+    pre code {{ padding: 0; background: transparent; }}
+    blockquote {{
+      border-left: 4px solid var(--accent-color);
+      margin: 1.5em 0;
+      padding: 0.6em 1.2em;
+      color: var(--text-secondary);
+      background-color: var(--table-stripe-bg);
+      border-radius: 0 8px 8px 0;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.5em 0;
+      font-size: 0.95em;
+    }}
+    th, td {{
+      padding: 12px 14px;
+      text-align: left;
+      border: 1px solid var(--border-color);
+    }}
+    th {{
+      background-color: var(--table-header-bg);
+      font-weight: 600;
+    }}
+    tr:nth-child(even) {{
+      background-color: var(--table-stripe-bg);
+    }}
+    .log-badge {{
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      border-radius: 4px;
+      text-transform: uppercase;
+      margin-right: 6px;
+    }}
+    .log-info {{ background: #e0f2fe; color: #0369a1; }}
+    .log-warn {{ background: #fef3c7; color: #b45309; }}
+    .log-error {{ background: #fee2e2; color: #b91c1c; }}
+    .log-debug {{ background: #f1f5f9; color: #475569; }}
+    .log-row {{ font-family: monospace; font-size: 0.9em; padding: 6px 0; border-bottom: 1px solid var(--border-color); }}
+    .log-ts {{ color: var(--text-secondary); margin-right: 8px; }}
+  </style>
+</head>
+<body>
+  <div class="document-card">
+    {body_html}
+  </div>
+</body>
+</html>"""
+
+
+# ==========================================
+# Advanced Structured JSON Converters
+# ==========================================
+
+def _infer_value_type(val: str):
+    """Auto-converts string into int, float, bool, or original string."""
+    v_clean = val.strip()
+    if v_clean.lower() == "true":
+        return True
+    if v_clean.lower() == "false":
+        return False
+    if v_clean.lower() in ("null", "none"):
+        return None
+    if v_clean.isdigit() or (v_clean.startswith("-") and v_clean[1:].isdigit()):
+        try:
+            return int(v_clean)
+        except ValueError:
+            pass
+    try:
+        return float(v_clean)
+    except ValueError:
+        pass
+    return val
+
+
+def text_to_structured_json(text: str) -> str:
+    """
+    Intelligently parses plain text into structured, readable JSON:
+    - Automatically detects key-value configs, INI sections, logs, bullet lists, or document paragraphs.
+    """
+    # 1. Check if already valid JSON
+    try:
+        parsed = json.loads(text)
+        return json.dumps(parsed, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+    lines = text.splitlines()
+    non_empty_lines = [l.strip() for l in lines if l.strip()]
+
+    # 2. Check for key-value or INI configurations (e.g. key: val or key = val)
+    kv_pattern = re.compile(r'^([a-zA-Z0-9_\-\.\s]+)\s*[:=]\s*(.*)$')
+    key_values = {}
+    sections = {}
+    current_section = "general"
+    kv_count = 0
+
+    for line in non_empty_lines:
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line[1:-1].strip()
+            if current_section not in sections:
+                sections[current_section] = {}
+            continue
+        m = kv_pattern.match(line)
+        if m:
+            k, v = m.group(1).strip(), m.group(2).strip()
+            val_cast = _infer_value_type(v)
+            if current_section not in sections:
+                sections[current_section] = {}
+            sections[current_section][k] = val_cast
+            key_values[k] = val_cast
+            kv_count += 1
+
+    # 3. Check for Log lines (Timestamp + Level + Message)
+    log_pattern = re.compile(r'^(\d{4}[-/.]\d{2}[-/.]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)\s*(?:\[(\w+)\]|(\w+):)?\s*(.*)$')
+    log_entries = []
+    for line in non_empty_lines:
+        m = log_pattern.match(line)
+        if m:
+            ts, lvl1, lvl2, msg = m.groups()
+            level = (lvl1 or lvl2 or "INFO").upper()
+            log_entries.append({
+                "timestamp": ts,
+                "level": level,
+                "message": msg.strip()
+            })
+
+    words = text.split()
+    meta = {
+        "lines_count": len(lines),
+        "words_count": len(words),
+        "characters_count": len(text)
+    }
+
+    if len(log_entries) >= len(non_empty_lines) * 0.7 and len(log_entries) > 0:
+        result = {
+            "meta": meta,
+            "type": "logs",
+            "entries": log_entries
+        }
+    elif kv_count >= len(non_empty_lines) * 0.5 and kv_count > 0:
+        if len(sections) > 1 or (len(sections) == 1 and "general" not in sections):
+            result = {
+                "meta": meta,
+                "type": "configuration",
+                "sections": sections
+            }
+        else:
+            result = {
+                "meta": meta,
+                "type": "key_value",
+                "data": key_values
+            }
+    else:
+        # Structured paragraphs and lines
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        result = {
+            "meta": meta,
+            "type": "text_document",
+            "paragraphs": paragraphs,
+            "lines": lines
+        }
+
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+def markdown_to_structured_json(md_text: str) -> str:
+    """Parses Markdown structure into JSON with headings, sections, lists, and code blocks."""
+    lines = md_text.splitlines()
+    sections = []
+    current_section = {
+        "title": "Introduction",
+        "level": 0,
+        "paragraphs": [],
+        "lists": [],
+        "code_blocks": []
+    }
+    in_code = False
+    code_lang = ""
+    code_buffer = []
+    current_list = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            if in_code:
+                current_section["code_blocks"].append({
+                    "language": code_lang or "plain",
+                    "code": "\n".join(code_buffer)
+                })
+                in_code = False
+                code_buffer = []
+            else:
+                in_code = True
+                code_lang = stripped[3:].strip()
+            continue
+
+        if in_code:
+            code_buffer.append(line)
+            continue
+
+        # Header check
+        if stripped.startswith("#"):
+            if current_list:
+                current_section["lists"].append(current_list)
+                current_list = []
+
+            h_level = len(stripped.split()[0])
+            h_text = stripped.lstrip("#").strip()
+            if current_section["paragraphs"] or current_section["lists"] or current_section["code_blocks"] or current_section["level"] > 0:
+                sections.append(current_section)
+            current_section = {
+                "title": h_text,
+                "level": h_level,
+                "paragraphs": [],
+                "lists": [],
+                "code_blocks": []
+            }
+            continue
+
+        # List check
+        if stripped.startswith(("- ", "* ", "+ ")) or (len(stripped) > 2 and stripped[0].isdigit() and stripped[1:3] in (". ", ") ")):
+            item_text = re.sub(r'^(?:[-*+]|\d+[.)])\s+', '', stripped)
+            current_list.append(item_text)
+            continue
+        elif current_list:
+            current_section["lists"].append(current_list)
+            current_list = []
+
+        if stripped:
+            current_section["paragraphs"].append(stripped)
+
+    if current_list:
+        current_section["lists"].append(current_list)
+    sections.append(current_section)
+
+    result = {
+        "meta": {
+            "total_sections": len(sections),
+            "lines_count": len(lines),
+            "words_count": len(md_text.split()),
+        },
+        "sections": sections
+    }
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+def docx_to_structured_json(docx_bytes: bytes) -> str:
+    """Extracts DOCX content into structured JSON containing headings, paragraphs, and tables."""
+    doc = Document(io.BytesIO(docx_bytes))
+    headings = []
+    paragraphs = []
+    tables_data = []
+
+    for p in doc.paragraphs:
+        txt = p.text.strip()
+        if not txt:
+            continue
+        style = p.style.name.lower() if p.style else ""
+        if "heading" in style or "title" in style:
+            headings.append({"style": p.style.name if p.style else "Heading", "text": txt})
+        paragraphs.append(txt)
+
+    for t in doc.tables:
+        if not t.rows:
+            continue
+        headers = [c.text.strip() for c in t.rows[0].cells]
+        rows_list = []
+        for r in t.rows[1:]:
+            row_dict = {}
+            for idx, c in enumerate(r.cells):
+                h_name = headers[idx] if idx < len(headers) and headers[idx] else f"col_{idx+1}"
+                row_dict[h_name] = _infer_value_type(c.text.strip())
+            rows_list.append(row_dict)
+        tables_data.append({
+            "headers": headers,
+            "rows": rows_list
+        })
+
+    result = {
+        "meta": {
+            "total_headings": len(headings),
+            "total_paragraphs": len(paragraphs),
+            "total_tables": len(tables_data),
+        },
+        "headings": headings,
+        "paragraphs": paragraphs,
+        "tables": tables_data
+    }
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+def csv_to_structured_json(csv_text: str) -> str:
+    """Converts CSV/TSV to typed and structured JSON with table meta."""
+    delimiter = "\t" if "\t" in csv_text and "," not in csv_text else (";" if ";" in csv_text and "," not in csv_text else ",")
+    reader = csv.DictReader(io.StringIO(csv_text), delimiter=delimiter)
+    typed_rows = []
+    fieldnames = reader.fieldnames or []
+
+    for row in reader:
+        typed_row = {}
+        for k, v in row.items():
+            typed_row[k] = _infer_value_type(v) if v is not None else None
+        typed_rows.append(typed_row)
+
+    result = {
+        "meta": {
+            "columns": fieldnames,
+            "total_rows": len(typed_rows)
+        },
+        "data": typed_rows
+    }
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+# ==========================================
+# Advanced Readable HTML Converters
+# ==========================================
+
+def text_to_readable_html(text: str, title: str = "Документ") -> str:
+    """Converts plain text or log into a beautifully formatted, readable HTML webpage."""
+    lines = text.splitlines()
+    non_empty = [l.strip() for l in lines if l.strip()]
+
+    # Check if log file
+    log_pattern = re.compile(r'^(\d{4}[-/.]\d{2}[-/.]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)\s*(?:\[(\w+)\]|(\w+):)?\s*(.*)$')
+    is_log = sum(1 for l in non_empty if log_pattern.match(l)) >= len(non_empty) * 0.6 if non_empty else False
+
+    body_parts = []
+    body_parts.append(f"<h1>{html.escape(title)}</h1>")
+
+    if is_log:
+        body_parts.append("<div class='log-container'>")
+        for line in lines:
+            m = log_pattern.match(line.strip())
+            if m:
+                ts, lvl1, lvl2, msg = m.groups()
+                lvl = (lvl1 or lvl2 or "INFO").lower()
+                badge_class = f"log-{lvl}" if lvl in ("info", "warn", "warning", "error", "debug") else "log-debug"
+                body_parts.append(
+                    f"<div class='log-row'>"
+                    f"<span class='log-ts'>{html.escape(ts)}</span>"
+                    f"<span class='log-badge {badge_class}'>{html.escape(lvl.upper())}</span>"
+                    f"<span>{html.escape(msg)}</span>"
+                    f"</div>"
+                )
+            elif line.strip():
+                body_parts.append(f"<div class='log-row'>{html.escape(line)}</div>")
+        body_parts.append("</div>")
+    else:
+        paragraphs = text.split("\n\n")
+        for para in paragraphs:
+            para_clean = para.strip()
+            if not para_clean:
+                continue
+
+            # Auto linkify URLs
+            para_escaped = html.escape(para_clean)
+            para_linked = re.sub(
+                r'(https?://[^\s<>"]+|www\.[^\s<>"]+)',
+                r'<a href="\1" target="_blank" rel="noopener">\1</a>',
+                para_escaped
+            )
+            # Preserve single line breaks inside paragraph
+            para_html = para_linked.replace("\n", "<br>")
+            body_parts.append(f"<p>{para_html}</p>")
+
+    return _wrap_in_readable_html_template("\n".join(body_parts), title=title)
+
+
+def markdown_to_readable_html(md_text: str, title: str = "Документ") -> str:
+    """Converts Markdown to a full-featured styled HTML document."""
+    html_body = markdown.markdown(md_text, extensions=['extra', 'tables', 'fenced_code', 'nl2br', 'sane_lists'])
+    return _wrap_in_readable_html_template(html_body, title=title)
+
+
+def docx_to_readable_html(docx_bytes: bytes, title: str = "Документ") -> str:
+    """Converts DOCX into a styled readable HTML document."""
+    md_text = docx_to_markdown(docx_bytes)
+    return markdown_to_readable_html(md_text, title=title)
+
+
+def csv_to_readable_html(csv_text: str, title: str = "Таблица") -> str:
+    """Converts CSV table into an interactive, readable HTML table."""
+    md_table = csv_to_markdown(csv_text)
+    return markdown_to_readable_html(md_table, title=title)
+
+
+# ==========================================
+# DOCX <-> Markdown Core Handlers
 # ==========================================
 
 def _add_markdown_runs_to_paragraph(paragraph, text: str) -> None:
@@ -415,22 +894,8 @@ def text_to_docx(text: str) -> bytes:
     return out_io.getvalue()
 
 
-def markdown_to_html(md_text: str) -> str:
-    """Converts Markdown to standalone HTML document."""
-    html_body = markdown.markdown(md_text, extensions=['extra', 'tables', 'fenced_code'])
-    return (
-        "<!DOCTYPE html>\n"
-        "<html>\n<head>\n<meta charset=\"utf-8\">\n"
-        "<style>body { font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: 40px auto; padding: 0 20px; } table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid #ddd; padding: 8px; } tr:nth-child(even){ background-color: #f2f2f2; } th { background-color: #333; color: white; } pre { background: #f4f4f4; padding: 10px; border-radius: 5px; }</style>\n"
-        "</head>\n<body>\n"
-        f"{html_body}\n"
-        "</body>\n</html>"
-    )
-
-
 def html_to_markdown(html_text: str) -> str:
-    """Simple HTML to Markdown converter."""
-    # Convert headings
+    """HTML to Markdown converter."""
     text = re.sub(r'<h1[^>]*>(.*?)</h1>', r'# \1\n\n', html_text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r'<h2[^>]*>(.*?)</h2>', r'## \1\n\n', text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r'<h3[^>]*>(.*?)</h3>', r'### \1\n\n', text, flags=re.DOTALL | re.IGNORECASE)
@@ -455,21 +920,13 @@ def html_to_text(html_text: str) -> str:
     return clean.strip()
 
 
-def csv_to_json(text: str) -> str:
-    """Converts CSV/TSV to formatted JSON string."""
-    delimiter = "\t" if "\t" in text and "," not in text else (";" if ";" in text and "," not in text else ",")
-    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
-    rows = list(reader)
-    if not rows:
-        reader2 = csv.reader(io.StringIO(text), delimiter=delimiter)
-        rows = list(reader2)
-    return json.dumps(rows, ensure_ascii=False, indent=2)
-
-
 def json_to_csv(text: str) -> str:
     """Converts JSON to CSV string."""
     data = json.loads(text)
     out = io.StringIO()
+    if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
+        data = data["data"]
+
     if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
         keys = list(data[0].keys())
         writer = csv.DictWriter(out, fieldnames=keys)
@@ -536,6 +993,10 @@ def csv_to_docx(text: str) -> bytes:
     return out_io.getvalue()
 
 
+# ==========================================
+# Main Document Converter Router
+# ==========================================
+
 def convert_document(input_bytes: bytes, source_format: str, target_format: str) -> tuple[bytes, str]:
     """
     Converts document or text between formats.
@@ -544,19 +1005,21 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
     src = normalize_format(source_format)
     target = normalize_format(target_format)
 
-    # 1. DOCX as source
+    # 1. DOCX source
     if src == "DOCX":
         if target == "MD":
             md_str = docx_to_markdown(input_bytes)
             return md_str.encode("utf-8"), "md"
+        elif target == "JSON":
+            json_str = docx_to_structured_json(input_bytes)
+            return json_str.encode("utf-8"), "json"
+        elif target == "HTML":
+            html_str = docx_to_readable_html(input_bytes)
+            return html_str.encode("utf-8"), "html"
         elif target in ("TXT", "DAT", "LOG"):
             txt_str = docx_to_text(input_bytes)
             ext = SUPPORTED_DOCUMENT_FORMATS[target]["ext"]
             return txt_str.encode("utf-8"), ext
-        elif target == "HTML":
-            md_str = docx_to_markdown(input_bytes)
-            html_str = markdown_to_html(md_str)
-            return html_str.encode("utf-8"), "html"
         else:
             txt_str = docx_to_text(input_bytes)
             ext = SUPPORTED_DOCUMENT_FORMATS.get(target, {}).get("ext", target.lower())
@@ -565,7 +1028,34 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
     # Non-DOCX source: decode text
     text_content = decode_text(input_bytes)
 
-    # 2. Target DOCX
+    # 2. Target JSON (Smart Structured Conversion)
+    if target == "JSON":
+        if src == "MD":
+            json_str = markdown_to_structured_json(text_content)
+        elif src in ("CSV", "TSV"):
+            json_str = csv_to_structured_json(text_content)
+        else:
+            json_str = text_to_structured_json(text_content)
+        return json_str.encode("utf-8"), "json"
+
+    # 3. Target HTML (Readable styled webpage)
+    if target == "HTML":
+        if src == "MD":
+            html_str = markdown_to_readable_html(text_content)
+        elif src in ("CSV", "TSV"):
+            html_str = csv_to_readable_html(text_content)
+        elif src == "JSON":
+            try:
+                pretty = json.dumps(json.loads(text_content), ensure_ascii=False, indent=2)
+            except Exception:
+                pretty = text_content
+            body = f"<h1>JSON Документ</h1><pre><code>{html.escape(pretty)}</code></pre>"
+            html_str = _wrap_in_readable_html_template(body, title="JSON Документ")
+        else:
+            html_str = text_to_readable_html(text_content)
+        return html_str.encode("utf-8"), "html"
+
+    # 4. Target DOCX
     if target == "DOCX":
         if src == "MD":
             return markdown_to_docx(text_content), "docx"
@@ -577,15 +1067,13 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
         else:
             return text_to_docx(text_content), "docx"
 
-    # 3. MD as source
+    # 5. MD as source
     if src == "MD":
-        if target == "HTML":
-            return markdown_to_html(text_content).encode("utf-8"), "html"
-        elif target in ("TXT", "DAT", "LOG"):
+        if target in ("TXT", "DAT", "LOG"):
             ext = SUPPORTED_DOCUMENT_FORMATS[target]["ext"]
             return text_content.encode("utf-8"), ext
 
-    # 4. Target MD
+    # 6. Target MD
     if target == "MD":
         if src in ("CSV", "TSV"):
             return csv_to_markdown(text_content).encode("utf-8"), "md"
@@ -601,16 +1089,11 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
         else:
             return text_content.encode("utf-8"), "md"
 
-    # 5. CSV / TSV
+    # 7. CSV / TSV
     if src == "CSV":
-        if target == "JSON":
-            return csv_to_json(text_content).encode("utf-8"), "json"
-        elif target == "TSV":
+        if target == "TSV":
             tsv_str = text_content.replace(",", "\t")
             return tsv_str.encode("utf-8"), "tsv"
-        elif target == "HTML":
-            md_str = csv_to_markdown(text_content)
-            return markdown_to_html(md_str).encode("utf-8"), "html"
         elif target in ("TXT", "DAT", "LOG"):
             ext = SUPPORTED_DOCUMENT_FORMATS[target]["ext"]
             return text_content.encode("utf-8"), ext
@@ -619,37 +1102,25 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
         if target == "CSV":
             csv_str = text_content.replace("\t", ",")
             return csv_str.encode("utf-8"), "csv"
-        elif target == "JSON":
-            return csv_to_json(text_content).encode("utf-8"), "json"
-        elif target == "HTML":
-            md_str = csv_to_markdown(text_content)
-            return markdown_to_html(md_str).encode("utf-8"), "html"
         elif target in ("TXT", "DAT", "LOG"):
             ext = SUPPORTED_DOCUMENT_FORMATS[target]["ext"]
             return text_content.encode("utf-8"), ext
 
-    # 6. JSON
+    # 8. JSON
     if src == "JSON":
         if target == "CSV":
             return json_to_csv(text_content).encode("utf-8"), "csv"
-        elif target == "HTML":
-            try:
-                pretty = json.dumps(json.loads(text_content), ensure_ascii=False, indent=2)
-            except Exception:
-                pretty = text_content
-            html = f"<!DOCTYPE html><html><head><meta charset='utf-8'></head><body><pre><code>{pretty}</code></pre></body></html>"
-            return html.encode("utf-8"), "html"
         elif target in ("TXT", "DAT", "LOG"):
             ext = SUPPORTED_DOCUMENT_FORMATS[target]["ext"]
             return text_content.encode("utf-8"), ext
 
-    # 7. HTML
+    # 9. HTML
     if src == "HTML":
         if target in ("TXT", "DAT", "LOG"):
             plain = html_to_text(text_content)
             ext = SUPPORTED_DOCUMENT_FORMATS[target]["ext"]
             return plain.encode("utf-8"), ext
 
-    # 8. General fallback for text files
+    # 10. General fallback for text files
     ext = SUPPORTED_DOCUMENT_FORMATS.get(target, {}).get("ext", target.lower())
     return text_content.encode("utf-8"), ext
