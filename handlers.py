@@ -127,8 +127,9 @@ async def start_converter_mode(message: Message, state: FSMContext) -> None:
         "• Картинки: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
         "• Документы/текст: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
         "• Аудио: MP3, WAV, OGG, OPUS, FLAC, AAC, M4A, WMA, AIFF, AMR, AC3, MP2\n"
-        "• Видео: MP4, MOV, WEBM, AVI, MKV, GIF, FLV, WMV, 3GP, TS, MPEG, OGV\n"
-        "Обязательно без сжатия."
+        "• Видео: MP4, MOV, WEBM, AVI, MKV, GIF, FLV, WMV, 3GP, TS, MPEG, OGV\n\n"
+        "Обязательно без сжатия.\n"
+        "Сообщение каждого формата должно быть меньше 20 мб. Но если вы меня поддержите (не намек) то можно будет открыть свой впс и отправлять файлы больше :DDD"
     )
     await message.answer(
         prompt_text,
