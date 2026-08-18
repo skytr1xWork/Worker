@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from flask import Flask, jsonify, render_template, request
 
-# Setup logging
+# setup
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -24,7 +24,7 @@ class BotSupervisor:
         self._restart_event = threading.Event()
 
         self.is_running = False
-        self.status = "starting"  # "healthy", "error", "stopped", "restarting"
+        self.status = "starting"
         self.server_started_at = datetime.now(timezone.utc)
         self.started_at: datetime | None = None
         self.last_restart_at: datetime | None = None
@@ -34,7 +34,6 @@ class BotSupervisor:
         self.last_error_traceback: str | None = None
 
     def start(self) -> None:
-        """Starts the supervisor monitoring loop in a background thread."""
         with self._lock:
             if self._monitor_thread and self._monitor_thread.is_alive():
                 return
@@ -48,7 +47,6 @@ class BotSupervisor:
             logger.info("Supervisor monitor thread started.")
 
     def trigger_restart(self) -> None:
-        """Requests an explicit restart of the bot."""
         self._restart_event.set()
         logger.info("Manual bot restart requested.")
 
@@ -84,8 +82,6 @@ class BotSupervisor:
             )
             self._bot_worker = worker_thread
             worker_thread.start()
-
-            # Give the bot thread a brief moment to initialize or fail immediately
             time.sleep(1.5)
 
             if worker_thread.is_alive() and bot_error_container[0] is None:
@@ -93,14 +89,11 @@ class BotSupervisor:
                     self.is_running = True
                     self.status = "healthy"
                 logger.info("Bot is healthy and polling updates.")
-
-                # Keep monitoring while thread lives and no manual restart/stop is requested
                 while worker_thread.is_alive() and not self._stop_event.is_set() and not self._restart_event.is_set():
                     time.sleep(1.0)
             else:
                 logger.warning("Bot failed during startup phase.")
 
-            # Bot thread stopped or encountered an error or restart was requested
             with self._lock:
                 self.is_running = False
 
@@ -132,7 +125,6 @@ class BotSupervisor:
 
                 logger.warning("Bot worker finished. Server continues running normally.")
 
-            # Wait until a manual restart is requested or server terminates (NO auto-restart loop)
             while not self._stop_event.is_set() and not self._restart_event.is_set():
                 time.sleep(1.0)
 
@@ -174,7 +166,6 @@ def index():
         is_healthy = telemetry["bot"]["is_running"] and telemetry["bot"]["status"] == "healthy"
         return "", (200 if is_healthy else 503)
 
-    # If JSON is explicitly requested
     if request.args.get("format") == "json" or request.accept_mimetypes.best == "application/json":
         telemetry = supervisor.get_telemetry()
         is_healthy = telemetry["bot"]["is_running"] and telemetry["bot"]["status"] == "healthy"
@@ -185,12 +176,6 @@ def index():
 
 @app.route("/health", methods=["GET", "HEAD"])
 def health():
-    """
-    Uptime Robot probe endpoint.
-    Returns:
-      - HTTP 200 OK when bot is active and healthy.
-      - HTTP 503 Service Unavailable when bot has crashed/stopped.
-    """
     telemetry = supervisor.get_telemetry()
     is_healthy = telemetry["bot"]["is_running"] and telemetry["bot"]["status"] == "healthy"
     status_code = 200 if is_healthy else 503
@@ -211,7 +196,6 @@ def health():
 
 @app.get("/api/status")
 def api_status():
-    """Full telemetry payload for the web UI."""
     return jsonify(supervisor.get_telemetry())
 
 
@@ -229,8 +213,6 @@ def api_restart():
 def favicon():
     return "", 204
 
-
-# Start supervisor automatically when app is loaded (works with both 'python start.py' and 'gunicorn start:app')
 supervisor.start()
 
 if __name__ == "__main__":
