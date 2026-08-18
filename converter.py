@@ -130,6 +130,7 @@ AUDIO_EXTENSIONS = {
     "wav": "WAV",
     "ogg": "OGG",
     "opus": "OPUS",
+    "oga": "OPUS",
     "flac": "FLAC",
     "aac": "AAC",
     "m4a": "M4A",
@@ -148,6 +149,7 @@ AUDIO_MIME_TYPES = {
     "audio/x-wav": "WAV",
     "audio/ogg": "OGG",
     "audio/opus": "OPUS",
+    "audio/x-opus+ogg": "OPUS",
     "audio/flac": "FLAC",
     "audio/x-flac": "FLAC",
     "audio/aac": "AAC",
@@ -158,7 +160,6 @@ AUDIO_MIME_TYPES = {
     "audio/x-aiff": "AIFF",
     "audio/amr": "AMR",
     "audio/ac3": "AC3",
-    "audio/x-opus+ogg": "OPUS",
 }
 
 
@@ -175,8 +176,10 @@ def normalize_format(fmt: str) -> str:
         return "MD"
     if cleaned == "HTM":
         return "HTML"
-    if cleaned == "AIF":
+    if cleaned in ("AIF", "AIFF"):
         return "AIFF"
+    if cleaned == "OGA":
+        return "OPUS"
     return cleaned
 
 
@@ -207,7 +210,7 @@ def detect_file_type(filename: str | None = None, mime_type: str | None = None) 
             for m_key, f_val in AUDIO_MIME_TYPES.items():
                 if m_key in mime:
                     return "audio", f_val
-            if "opus" in mime:
+            if "opus" in mime or "oga" in mime:
                 return "audio", "OPUS"
             if "ogg" in mime:
                 return "audio", "OGG"
@@ -274,12 +277,13 @@ def decode_text(raw_bytes: bytes) -> str:
 
 
 # ==========================================
-# Audio Converter (using FFmpeg)
+# Audio Converter (using FFmpeg with high compatibility)
 # ==========================================
 
-def convert_audio(input_bytes: bytes, source_format: str, target_format: str) -> tuple[bytes, str]:
+def convert_audio(input_bytes: bytes, source_format: str, target_format: str, orig_filename: str | None = None) -> tuple[bytes, str]:
     """
     Converts audio raw bytes into the requested target format using FFmpeg.
+    Ensures audible volume, proper sample rates, and correct codecs.
     Returns (output_bytes, file_extension).
     """
     src = normalize_format(source_format)
@@ -288,7 +292,13 @@ def convert_audio(input_bytes: bytes, source_format: str, target_format: str) ->
     if target not in SUPPORTED_AUDIO_FORMATS:
         raise ValueError(f"Неподдерживаемый целевой аудиоформат: {target_format}")
 
-    src_ext = SUPPORTED_AUDIO_FORMATS.get(src, {}).get("ext", "tmp")
+    # Use original extension if available so FFmpeg knows the demuxer
+    src_ext = "audio"
+    if orig_filename and "." in orig_filename:
+        src_ext = orig_filename.rsplit(".", 1)[-1].lower()
+    elif src in SUPPORTED_AUDIO_FORMATS:
+        src_ext = SUPPORTED_AUDIO_FORMATS[src]["ext"]
+
     dst_ext = SUPPORTED_AUDIO_FORMATS[target]["ext"]
 
     with tempfile.NamedTemporaryFile(suffix=f".{src_ext}", delete=False) as src_f:
@@ -301,25 +311,27 @@ def convert_audio(input_bytes: bytes, source_format: str, target_format: str) ->
     try:
         cmd = ["ffmpeg", "-y", "-i", src_path, "-vn"]
         if target == "MP3":
-            cmd.extend(["-c:a", "libmp3lame", "-q:a", "2"])
+            cmd.extend(["-c:a", "libmp3lame", "-b:a", "192k", "-ar", "44100", "-ac", "2"])
         elif target == "OPUS":
-            cmd.extend(["-c:a", "libopus", "-b:a", "128k"])
+            cmd.extend(["-c:a", "libopus", "-b:a", "128k", "-ar", "48000", "-vbr", "on"])
         elif target == "OGG":
-            cmd.extend(["-c:a", "libvorbis", "-q:a", "4"])
+            cmd.extend(["-c:a", "libvorbis", "-q:a", "4", "-ar", "44100"])
         elif target == "FLAC":
-            cmd.extend(["-c:a", "flac"])
+            cmd.extend(["-c:a", "flac", "-ar", "44100"])
         elif target in ("AAC", "M4A"):
-            cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+            cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-movflags", "+faststart"])
         elif target == "WAV":
-            cmd.extend(["-c:a", "pcm_s16le"])
+            cmd.extend(["-c:a", "pcm_s16le", "-ar", "44100", "-ac", "2"])
         elif target == "AMR":
             cmd.extend(["-ar", "8000", "-ac", "1", "-c:a", "libopencore_amrnb"])
         elif target == "AIFF":
-            cmd.extend(["-c:a", "pcm_s16be"])
+            cmd.extend(["-c:a", "pcm_s16be", "-ar", "44100"])
         elif target == "AC3":
-            cmd.extend(["-c:a", "ac3", "-b:a", "192k"])
+            cmd.extend(["-c:a", "ac3", "-b:a", "192k", "-ar", "44100"])
         elif target == "MP2":
-            cmd.extend(["-c:a", "mp2", "-b:a", "192k"])
+            cmd.extend(["-c:a", "mp2", "-b:a", "192k", "-ar", "44100"])
+        elif target == "WMA":
+            cmd.extend(["-c:a", "wmav2", "-b:a", "192k", "-ar", "44100"])
 
         cmd.append(dst_path)
 

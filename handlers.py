@@ -340,7 +340,7 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
 
         # Convert based on category
         if category == "audio" or target_format in SUPPORTED_AUDIO_FORMATS:
-            output_bytes, ext = convert_audio(input_bytes, source_format, target_format)
+            output_bytes, ext = convert_audio(input_bytes, source_format, target_format, orig_filename=orig_filename)
         elif category == "document" or target_format in SUPPORTED_DOCUMENT_FORMATS:
             output_bytes, ext = convert_document(input_bytes, source_format, target_format)
         else:
@@ -359,12 +359,37 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
         )
 
         if callback.message:
-            await callback.message.answer_document(
-                document=output_file,
-                caption=caption,
-                reply_markup=get_done_keyboard(),
-                parse_mode="Markdown",
-            )
+            if category == "audio" or target_format in SUPPORTED_AUDIO_FORMATS:
+                try:
+                    if target_format == "OPUS":
+                        await callback.message.answer_voice(
+                            voice=output_file,
+                            caption=caption,
+                            reply_markup=get_done_keyboard(),
+                            parse_mode="Markdown",
+                        )
+                    else:
+                        await callback.message.answer_audio(
+                            audio=output_file,
+                            caption=caption,
+                            title=base_name,
+                            reply_markup=get_done_keyboard(),
+                            parse_mode="Markdown",
+                        )
+                except Exception:
+                    await callback.message.answer_document(
+                        document=output_file,
+                        caption=caption,
+                        reply_markup=get_done_keyboard(),
+                        parse_mode="Markdown",
+                    )
+            else:
+                await callback.message.answer_document(
+                    document=output_file,
+                    caption=caption,
+                    reply_markup=get_done_keyboard(),
+                    parse_mode="Markdown",
+                )
 
     except Exception as exc:
         logger.exception("Error during conversion")
