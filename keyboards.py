@@ -33,7 +33,7 @@ def get_format_keyboard(source_format: str, category: str = "image") -> InlineKe
             [f for f in ["DOCX", "MD", "TXT", "HTML", "DAT", "CSV", "JSON"] if f != source_fmt],
         )
     elif category == "audio":
-        audio_order = ["MP3", "WAV", "OGG", "OPUS", "FLAC", "AAC", "M4A", "WMA", "AIFF", "AMR", "AC3", "MP2"]
+        audio_order = ["MP3", "WAV", "OGG", "OPUS (Голосовое сообщение)", "FLAC", "AAC", "M4A", "WMA", "AIFF", "AMR", "AC3", "MP2"]
         target_formats = [fmt for fmt in audio_order if fmt != source_fmt]
     else:
         format_order = ["PNG", "JPG", "WEBP", "BMP", "TIFF", "ICO", "PDF", "GIF"]
