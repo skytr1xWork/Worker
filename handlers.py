@@ -158,11 +158,11 @@ async def start_url_converter_mode(message: Message, state: FSMContext) -> None:
     await state.set_state(UrlConverterState.waiting_for_url)
     prompt_text = (
         "Отправь мне ссылку на медиа из поддерживаемого сервиса:\n"
-        "• 🔴 **YouTube** (видео, Shorts)\n"
-        "• 📌 **Pinterest** (пины, фото, видео)\n"
-        "• 📱 **TikTok** (видео)\n"
-        "• 🔵 **VK** (видео, клипы, посты)\n"
-        "• 🟡 **Яндекс Дзен** (видео, статьи)\n\n"
+        "• YouTube (видео, Shorts, Music)\n"
+        "• Pinterest (пины, фото, видео)\n"
+        "• TikTok (видео)\n"
+        "• VK (видео, клипы, посты)\n"
+        "• Яндекс Дзен (видео, статьи)\n\n"
         "Я могу сконвертировать медиа в **MP4**, **MP3** или **PNG**."
     )
     await message.answer(

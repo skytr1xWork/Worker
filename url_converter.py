@@ -3,10 +3,17 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.request
 from PIL import Image
+
+# Ensure system package path is included if running in custom venv
+for p in ("/usr/lib/python3.14/site-packages", "/usr/lib/python3/dist-packages", "/usr/local/lib/python3.14/dist-packages"):
+    if os.path.isdir(p) and p not in sys.path:
+        sys.path.append(p)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +63,24 @@ SUPPORTED_SERVICES = {
 }
 
 
+def get_ytdlp_cmd() -> list[str]:
+    """Dynamically finds the best command to execute yt-dlp across all environments."""
+    which_path = shutil.which("yt-dlp")
+    if which_path:
+        return [which_path]
+
+    for p in (
+        "/usr/bin/yt-dlp",
+        "/usr/local/bin/yt-dlp",
+        "/opt/render/project/src/.venv/bin/yt-dlp",
+        os.path.expanduser("~/.local/bin/yt-dlp"),
+    ):
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return [p]
+
+    return [sys.executable, "-m", "yt_dlp"]
+
+
 def detect_service(url: str) -> tuple[str | None, str | None]:
     """
     Detects if the URL belongs to a supported service.
@@ -85,10 +110,9 @@ def _get_pinterest_image_url(url: str) -> tuple[str | None, str | None]:
             }
         )
         with urllib.request.urlopen(req, timeout=12) as resp:
-            final_url = resp.geturl()
             html_content = resp.read().decode("utf-8", errors="replace")
 
-        # 1. Search og:image
+        # Search og:image and title
         og_img_match = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', html_content)
         title_match = re.search(r'<meta\s+property=["\']og:title["\']\s+content=["\']([^"\']+)["\']', html_content)
 
@@ -109,8 +133,7 @@ def get_url_metadata(url: str) -> dict:
     """
     Extracts title, duration, thumbnail from the URL using yt-dlp with fallback.
     """
-    cmd = [
-        "/usr/bin/yt-dlp",
+    cmd = get_ytdlp_cmd() + [
         "--dump-json",
         "--no-playlist",
         "--no-warnings",
@@ -159,6 +182,7 @@ def download_url_media(url: str, target_format: str) -> tuple[bytes, str, str]:
     """
     fmt = target_format.upper().strip()
     target_format = fmt
+    ytdlp_base = get_ytdlp_cmd()
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Case 1: Download PNG thumbnail or image
@@ -184,8 +208,7 @@ def download_url_media(url: str, target_format: str) -> tuple[bytes, str, str]:
 
             # 1. Try to download thumbnail via yt-dlp
             thumb_template = os.path.join(tmp_dir, "thumb.%(ext)s")
-            cmd_thumb = [
-                "/usr/bin/yt-dlp",
+            cmd_thumb = ytdlp_base + [
                 "--write-thumbnail",
                 "--skip-download",
                 "--no-playlist",
@@ -197,10 +220,13 @@ def download_url_media(url: str, target_format: str) -> tuple[bytes, str, str]:
             thumb_files = [os.path.join(tmp_dir, f) for f in os.listdir(tmp_dir) if os.path.isfile(os.path.join(tmp_dir, f))]
             if thumb_files:
                 img_path = thumb_files[0]
-                with Image.open(img_path) as img:
-                    out_io = io.BytesIO()
-                    img.save(out_io, format="PNG")
-                    return out_io.getvalue(), "png", "image.png"
+                try:
+                    with Image.open(img_path) as img:
+                        out_io = io.BytesIO()
+                        img.save(out_io, format="PNG")
+                        return out_io.getvalue(), "png", "image.png"
+                except Exception:
+                    pass
 
             # 2. Fallback: get metadata thumbnail URL and download directly
             meta = get_url_metadata(url)
@@ -222,8 +248,7 @@ def download_url_media(url: str, target_format: str) -> tuple[bytes, str, str]:
         # Case 2: Download MP3 Audio
         elif target_format == "MP3":
             out_template = os.path.join(tmp_dir, "audio.%(ext)s")
-            cmd_audio = [
-                "/usr/bin/yt-dlp",
+            cmd_audio = ytdlp_base + [
                 "--extract-audio",
                 "--audio-format", "mp3",
                 "--audio-quality", "0",
@@ -248,8 +273,7 @@ def download_url_media(url: str, target_format: str) -> tuple[bytes, str, str]:
         # Case 3: Download MP4 Video
         else:
             out_template = os.path.join(tmp_dir, "video.%(ext)s")
-            cmd_video = [
-                "/usr/bin/yt-dlp",
+            cmd_video = ytdlp_base + [
                 "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
                 "--merge-output-format", "mp4",
                 "--no-playlist",
