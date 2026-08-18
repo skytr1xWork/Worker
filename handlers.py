@@ -52,7 +52,10 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 @router.message(F.text == "Привет")
 async def cmd_help(message: Message) -> None:
     help_text = (
-            "Пока что я умею только конвертировать файлы и дать чутка информации о skytr1x, на этом все лол"
+            "Я по факту массивный бот хелпер для всего (по крайней мере по задумке), но так же имею пару комманд, которые могут как то тебя заинтересовать:\n"
+            "/support - поддержать любимого skytr1x"
+            "/about - а кто такой ваще ваш skytr1x\n\n"
+            "Пользуйтесь на здоровье, и да, подписок в боте не будет хD"
     )
     await message.answer(
         help_text,
@@ -82,7 +85,7 @@ async def cmd_about(message: Message) -> None:
 async def cmd_support(message: Message) -> None:
     support_text = (
         "Вы можете меня поддержать просто подписавшись на мой <a href='https://t.me/sktrxdev'>тгк</a> или же поддержать меня материально закинув мне чутка на хлеб через:\n"
-        "TON (GRAM): UQDL0xc0CBLU2_K15rxjpf-dga0f36qXYht-UTlSKESpoNlq\n"
+        "TON (GRAM): UQDL0xc0CBLU2_K15rxjpf-dga0f36qXYht-UTlSKESpoNlq\n\n"
         "Я буду очень благодарен :3"
     )
     await message.answer(
