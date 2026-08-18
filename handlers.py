@@ -296,7 +296,7 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
                 "Отправь мне файл (изображение, документ или аудио):\n"
                 "• Картинки: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
                 "• Текст/документы: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
-                "• Аудио: MP3, WAV, OGG, OPUS, FLAC, AAC, M4A, WMA, AIFF, AMR, AC3, MP2\n"
+                "• Аудио: MP3, WAV, OGG, OPUS (Голосовое сообщение), FLAC, AAC, M4A, WMA, AIFF, AMR, AC3, MP2\n"
                 "Обязательно без сжатия.",
                 reply_markup=get_cancel_keyboard(),
             )
