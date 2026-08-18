@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bot Supervisor & Health Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #0b0f19;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1f2937;
+      --border-subtle: #374151;
+      --border-active: #4b5563;
+      --text-primary: #f9fafb;
+      --text-secondary: #9ca3af;
+      --text-muted: #6b7280;
+      
+      --color-emerald: #10b981;
+      --color-emerald-bg: rgba(16, 185, 129, 0.12);
+      --color-emerald-border: rgba(16, 185, 129, 0.3);
+      
+      --color-amber: #f59e0b;
+      --color-amber-bg: rgba(245, 158, 11, 0.12);
+      --color-amber-border: rgba(245, 158, 11, 0.3);
+      
+      --color-rose: #ef4444;
+      --color-rose-bg: rgba(239, 68, 68, 0.12);
+      --color-rose-border: rgba(239, 68, 68, 0.3);
+      
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --shadow-md: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: var(--bg-base);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+      letter-spacing: -0.011em;
+      padding: 24px 16px;
+    }
+
+    .container {
+      max-width: 920px;
+      margin: 0 auto;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding: 8px 4px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: var(--radius-md);
+      background: linear-gradient(135deg, #1f2937, #374151);
+      border: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+
+    .brand-text h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    .brand-text p {
+      font-size: 0.825rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface-elevated);
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-decoration: none;
+    }
+
+    .btn:hover {
+      background-color: #374151;
+      border-color: var(--border-active);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn-primary {
+      background-color: #2563eb;
+      border-color: #3b82f6;
+      color: #ffffff;
+    }
+
+    .btn-primary:hover {
+      background-color: #1d4ed8;
+      border-color: #60a5fa;
+    }
+
+    .btn-sm {
+      padding: 4px 10px;
+      font-size: 0.775rem;
+    }
+
+    /* Main Status Hero Card */
+    .hero-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 20px;
+      box-shadow: var(--shadow-md);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .status-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .pulse-wrapper {
+      position: relative;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .pulse-dot {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background-color: var(--color-emerald);
+      box-shadow: 0 0 12px var(--color-emerald);
+      transition: background-color 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .pulse-ring {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      border: 2px solid var(--color-emerald);
+      opacity: 0.75;
+      animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+    }
+
+    @keyframes ping {
+      75%, 100% {
+        transform: scale(1.6);
+        opacity: 0;
+      }
+    }
+
+    .status-info h2 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 10px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border: 1px solid transparent;
+    }
+
+    .status-healthy {
+      background-color: var(--color-emerald-bg);
+      color: var(--color-emerald);
+      border-color: var(--color-emerald-border);
+    }
+
+    .status-degraded {
+      background-color: var(--color-amber-bg);
+      color: var(--color-amber);
+      border-color: var(--color-amber-border);
+    }
+
+    .status-error {
+      background-color: var(--color-rose-bg);
+      color: var(--color-rose);
+      border-color: var(--color-rose-border);
+    }
+
+    .status-subtitle {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    .http-status-box {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      padding: 10px 16px;
+      border-radius: var(--radius-md);
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      text-align: right;
+    }
+
+    .http-label {
+      color: var(--text-muted);
+      font-size: 0.725rem;
+      text-transform: uppercase;
+    }
+
+    .http-code {
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+
+    /* Metrics Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+    }
+
+    .metric-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-shadow: var(--shadow-md);
+    }
+
+    .metric-title {
+      font-size: 0.775rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .metric-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.35rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .metric-foot {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+
+    /* Section Cards */
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      box-shadow: var(--shadow-md);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 12px;
+    }
+
+    .card-title {
+      font-size: 1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Endpoints list */
+    .endpoints-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .endpoint-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .endpoint-method {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      font-size: 0.75rem;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: #1e3a8a;
+      color: #93c5fd;
+    }
+
+    .endpoint-path {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.875rem;
+      color: var(--text-primary);
+      flex: 1;
+    }
+
+    .endpoint-desc {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    /* Error diagnostics box */
+    .error-box {
+      background: rgba(239, 68, 68, 0.06);
+      border: 1px solid var(--color-rose-border);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .error-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--color-rose);
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    pre.traceback {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.775rem;
+      background: #000000;
+      color: #f87171;
+      padding: 12px;
+      border-radius: var(--radius-sm);
+      overflow-x: auto;
+      white-space: pre-wrap;
+      border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+
+    /* Auto refresh indicator */
+    .refresh-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.775rem;
+      color: var(--text-muted);
+      padding: 4px;
+    }
+
+    /* Toast */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--bg-surface-elevated);
+      color: var(--text-primary);
+      border: 1px solid var(--border-active);
+      padding: 12px 18px;
+      border-radius: var(--radius-md);
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      font-size: 0.875rem;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      z-index: 1000;
+      animation: fadeIn 0.2s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 640px) {
+      .hero-card {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .http-status-box {
+        width: 100%;
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <div class="brand-icon">🤖</div>
+        <div class="brand-text">
+          <h1>Telegram Bot Supervisor</h1>
+          <p>UptimeRobot Health System & Auto-Restarter</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btn-restart" class="btn btn-primary" onclick="triggerRestart()">
+          <span>🔄</span> Перезапустить бота
+        </button>
+        <button id="btn-refresh" class="btn" onclick="fetchStatus()">
+          <span>⚡</span> Обновить
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Status Card -->
+    <div class="hero-card" id="hero-card">
+      <div class="status-left">
+        <div class="pulse-wrapper">
+          <div class="pulse-ring" id="pulse-ring"></div>
+          <div class="pulse-dot" id="pulse-dot"></div>
+        </div>
+        <div class="status-info">
+          <h2>
+            <span id="status-text">Инициализация...</span>
+            <span class="status-badge status-healthy" id="status-badge">HEALTHY</span>
+          </h2>
+          <p class="status-subtitle" id="status-desc">Проверка состояния бота...</p>
+        </div>
+      </div>
+      <div class="http-status-box">
+        <span class="http-label">Ответ /health (Uptime Robot)</span>
+        <span class="http-code" id="http-code" style="color: var(--color-emerald)">HTTP 200 OK</span>
+      </div>
+    </div>
+
+    <!-- Metrics Grid -->
+    <div class="grid">
+      <div class="metric-card">
+        <span class="metric-title">Время работы бота</span>
+        <span class="metric-value" id="bot-uptime">--</span>
+        <span class="metric-foot" id="bot-started-at">Запуск: --</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-title">Авто-перезапуски</span>
+        <span class="metric-value" id="restart-count">0</span>
+        <span class="metric-foot" id="restart-note">Сбоев подряд: 0</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-title">Аптайм веб-сервера</span>
+        <span class="metric-value" id="server-uptime">--</span>
+        <span class="metric-foot">Flask & HTTP Gateway</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-title">Интервал проверок</span>
+        <span class="metric-value">3 сек</span>
+        <span class="metric-foot">Авто-опрос страницы</span>
+      </div>
+    </div>
+
+    <!-- Error Diagnostic Section (Visible only on errors) -->
+    <div class="card error-box" id="error-section" style="display: none;">
+      <div class="error-header">
+        <span>⚠️ Последняя ошибка бота (сохранена супервизором)</span>
+        <span id="error-time" style="font-family: 'JetBrains Mono'; font-size: 0.75rem;">--</span>
+      </div>
+      <div id="error-message" style="font-size: 0.875rem; color: var(--text-primary); font-weight: 500;"></div>
+      <pre class="traceback" id="error-traceback"></pre>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-sm" onclick="copyTraceback()">📋 Скопировать ошибку</button>
+      </div>
+    </div>
+
+    <!-- Monitoring & Uptime Robot Endpoints -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">📡 Эндпоинты для Uptime Robot и мониторинга</span>
+        <span style="font-size: 0.75rem; color: var(--text-muted);">HTTP GET & HEAD</span>
+      </div>
+      <p style="font-size: 0.85rem; color: var(--text-secondary);">
+        Укажите URL <code>/health</code> в вашем <b>Uptime Robot</b> (или Better Uptime / Cron-Job). При падении бота сервер продолжит стабильно работать, но вернет <b>HTTP 503 Service Unavailable</b>, уведомив вас.
+      </p>
+      <div class="endpoints-list">
+        <div class="endpoint-row">
+          <span class="endpoint-method">GET / HEAD</span>
+          <span class="endpoint-path" id="health-url-text">/health</span>
+          <span class="endpoint-desc">Проверка для Uptime Robot (200 OK / 503 Error)</span>
+          <button class="btn btn-sm" onclick="copyUrl('/health')">Копировать URL</button>
+        </div>
+        <div class="endpoint-row">
+          <span class="endpoint-method">GET</span>
+          <span class="endpoint-path" id="api-url-text">/api/status</span>
+          <span class="endpoint-desc">Полная JSON телеметрия состояния</span>
+          <button class="btn btn-sm" onclick="copyUrl('/api/status')">Копировать URL</button>
+        </div>
+        <div class="endpoint-row">
+          <span class="endpoint-method">POST / GET</span>
+          <span class="endpoint-path">/api/restart</span>
+          <span class="endpoint-desc">Принудительный перезапуск бота</span>
+          <button class="btn btn-sm" onclick="triggerRestart()">Перезапустить</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Refresh footer -->
+    <div class="refresh-bar">
+      <span>Состояние синхронизируется в реальном времени</span>
+      <span id="last-sync">Обновлено: только что</span>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+    let lastTracebackText = "";
+
+    function formatDuration(seconds) {
+      if (!seconds || seconds <= 0) return "0s";
+      seconds = Math.floor(seconds);
+      const d = Math.floor(seconds / 86400);
+      const h = Math.floor((seconds % 86400) / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = seconds % 60;
+
+      const parts = [];
+      if (d > 0) parts.push(`${d}d`);
+      if (h > 0 || d > 0) parts.push(`${h}h`);
+      if (m > 0 || h > 0 || d > 0) parts.push(`${m}m`);
+      parts.push(`${s}s`);
+      return parts.join(" ");
+    }
+
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.innerText = message;
+      toast.style.display = "flex";
+      setTimeout(() => {
+        toast.style.display = "none";
+      }, 3000);
+    }
+
+    function copyUrl(path) {
+      const fullUrl = window.location.origin + path;
+      navigator.clipboard.writeText(fullUrl).then(() => {
+        showToast(`Скопировано: ${fullUrl}`);
+      });
+    }
+
+    function copyTraceback() {
+      if (lastTracebackText) {
+        navigator.clipboard.writeText(lastTracebackText).then(() => {
+          showToast("Трейсбек скопирован в буфер обмена");
+        });
+      }
+    }
+
+    async function triggerRestart() {
+      const btn = document.getElementById("btn-restart");
+      btn.disabled = true;
+      btn.innerHTML = "<span>⏳</span> Перезапуск...";
+      try {
+        const res = await fetch("/api/restart", { method: "POST" });
+        const data = await res.json();
+        showToast("Команда перезапуска отправлена супервизору");
+        setTimeout(fetchStatus, 1000);
+      } catch (err) {
+        showToast("Ошибка при отправке команды: " + err.message);
+      } finally {
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.innerHTML = "<span>🔄</span> Перезапустить бота";
+        }, 1500);
+      }
+    }
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch("/api/status?t=" + Date.now());
+        const data = await res.json();
+        renderStatus(data);
+      } catch (err) {
+        console.error("Failed to fetch status:", err);
+      }
+    }
+
+    function renderStatus(data) {
+      const bot = data.bot || {};
+      const server = data.server || {};
+      
+      const isHealthy = bot.is_running && bot.status === "healthy";
+      const isStarting = bot.status === "starting" || bot.status === "restarting";
+      
+      const statusText = document.getElementById("status-text");
+      const statusBadge = document.getElementById("status-badge");
+      const statusDesc = document.getElementById("status-desc");
+      const pulseDot = document.getElementById("pulse-dot");
+      const pulseRing = document.getElementById("pulse-ring");
+      const httpCode = document.getElementById("http-code");
+
+      if (isHealthy) {
+        statusText.innerText = "Бот работает стабильно";
+        statusBadge.innerText = "HEALTHY";
+        statusBadge.className = "status-badge status-healthy";
+        statusDesc.innerText = "Aiogram Polling активен и принимает сообщения";
+        pulseDot.style.backgroundColor = "var(--color-emerald)";
+        pulseDot.style.boxShadow = "0 0 12px var(--color-emerald)";
+        pulseRing.style.borderColor = "var(--color-emerald)";
+        pulseRing.style.display = "block";
+        httpCode.innerText = "HTTP 200 OK";
+        httpCode.style.color = "var(--color-emerald)";
+      } else if (isStarting) {
+        statusText.innerText = "Бот запускается / восстанавливается";
+        statusBadge.innerText = "RESTARTING";
+        statusBadge.className = "status-badge status-degraded";
+        statusDesc.innerText = "Супервизор выполняет процедуру запуска потока бота...";
+        pulseDot.style.backgroundColor = "var(--color-amber)";
+        pulseDot.style.boxShadow = "0 0 12px var(--color-amber)";
+        pulseRing.style.borderColor = "var(--color-amber)";
+        pulseRing.style.display = "block";
+        httpCode.innerText = "HTTP 503 RECOVERING";
+        httpCode.style.color = "var(--color-amber)";
+      } else {
+        statusText.innerText = "Бот остановлен / сбой";
+        statusBadge.innerText = "STOPPED";
+        statusBadge.className = "status-badge status-error";
+        statusDesc.innerText = "Бот остановлен (авто-перезапуск отключен). Веб-сервер активен и готов к ручному перезапуску.";
+        pulseDot.style.backgroundColor = "var(--color-rose)";
+        pulseDot.style.boxShadow = "0 0 12px var(--color-rose)";
+        pulseRing.style.borderColor = "var(--color-rose)";
+        pulseRing.style.display = "none";
+        httpCode.innerText = "HTTP 503 SERVICE UNAVAILABLE";
+        httpCode.style.color = "var(--color-rose)";
+      }
+
+      // Metrics
+      document.getElementById("bot-uptime").innerText = isHealthy ? formatDuration(bot.uptime_seconds) : "0s";
+      document.getElementById("bot-started-at").innerText = bot.started_at ? `Запуск: ${new Date(bot.started_at).toLocaleTimeString()}` : "Не запущен";
+      document.getElementById("restart-count").innerText = bot.restart_count || 0;
+      document.getElementById("restart-note").innerText = `Сбоев подряд: ${bot.consecutive_failures || 0}`;
+      document.getElementById("server-uptime").innerText = formatDuration(server.uptime_seconds);
+
+      // Error Section
+      const errorSection = document.getElementById("error-section");
+      if (bot.last_error) {
+        errorSection.style.display = "flex";
+        document.getElementById("error-time").innerText = bot.last_error_time ? new Date(bot.last_error_time).toLocaleString() : "";
+        document.getElementById("error-message").innerText = bot.last_error;
+        document.getElementById("error-traceback").innerText = bot.last_error_traceback || bot.last_error;
+        lastTracebackText = bot.last_error_traceback || bot.last_error;
+      } else {
+        errorSection.style.display = "none";
+      }
+
+      document.getElementById("last-sync").innerText = "Обновлено: " + new Date().toLocaleTimeString();
+    }
+
+    // Initialize
+    document.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("health-url-text").innerText = window.location.origin + "/health";
+      document.getElementById("api-url-text").innerText = window.location.origin + "/api/status";
+      fetchStatus();
+      setInterval(fetchStatus, 3000);
+    });
+  </script>
+</body>
+</html>
