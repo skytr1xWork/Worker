@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import os
@@ -30,6 +31,13 @@ from keyboards import (
     get_done_keyboard,
     get_format_keyboard,
     get_main_keyboard,
+    get_url_done_keyboard,
+    get_url_format_keyboard,
+)
+from url_converter import (
+    detect_service,
+    download_url_media,
+    extract_first_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +47,11 @@ router = Router(name="main_router")
 
 class ConverterState(StatesGroup):
     waiting_for_file = State()
+    selecting_format = State()
+
+
+class UrlConverterState(StatesGroup):
+    waiting_for_url = State()
     selecting_format = State()
 
 
@@ -134,6 +147,61 @@ async def start_converter_mode(message: Message, state: FSMContext) -> None:
     await message.answer(
         prompt_text,
         reply_markup=get_cancel_keyboard(),
+    )
+
+
+@router.message(Command("url"))
+@router.message(Command("convert_url"))
+@router.message(F.text == "Конвертер (из ссылки)")
+@router.message(F.text.lower() == "конвертер (из ссылки)")
+async def start_url_converter_mode(message: Message, state: FSMContext) -> None:
+    await state.set_state(UrlConverterState.waiting_for_url)
+    prompt_text = (
+        "Отправь мне ссылку на медиа из поддерживаемого сервиса:\n"
+        "• 🔴 **YouTube** (видео, Shorts)\n"
+        "• 📌 **Pinterest** (пины, фото, видео)\n"
+        "• 📱 **TikTok** (видео)\n"
+        "• 🔵 **VK** (видео, клипы, посты)\n"
+        "• 🟡 **Яндекс Дзен** (видео, статьи)\n\n"
+        "Я могу сконвертировать медиа в **MP4**, **MP3** или **PNG**."
+    )
+    await message.answer(
+        prompt_text,
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+@router.message(F.text.regexp(r'https?://[^\s<>"]+'))
+async def handle_url_message(message: Message, state: FSMContext) -> None:
+    raw_text = message.text or ""
+    url = extract_first_url(raw_text)
+    if not url:
+        return
+
+    service_key, service_name = detect_service(url)
+    if not service_key:
+        current_st = await state.get_state()
+        if current_st == UrlConverterState.waiting_for_url:
+            await message.answer(
+                "Эта ссылка не принадлежит поддерживаемым сервисам.\n\n"
+                "Поддерживаются: YouTube, Pinterest, TikTok, VK, Яндекс Дзен.",
+                reply_markup=get_cancel_keyboard(),
+            )
+        return
+
+    await state.set_state(UrlConverterState.selecting_format)
+    await state.update_data(url=url, service=service_key, service_name=service_name)
+
+    caption = (
+        f"Ссылка распознана: **{service_name}**\n\n"
+        f"URL: `{url}`\n\n"
+        f"Выберите, во что нужно сконвертировать:"
+    )
+    await message.answer(
+        caption,
+        reply_markup=get_url_format_keyboard(),
+        parse_mode="Markdown",
     )
 
 
@@ -414,6 +482,126 @@ async def handle_photo(message: Message) -> None:
     await message.answer("Отправьте фото файлом без сжатия.")
 
 
+@router.callback_query(F.data.startswith("urlconv:"))
+async def handle_url_conversion_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    action = callback.data.split(":", 1)[1]
+
+    if action == "cancel":
+        await callback.answer("Конвертация отменена")
+        if callback.message:
+            await callback.message.edit_text("Конвертация ссылки отменена.")
+        await state.clear()
+        return
+
+    if action == "new_url":
+        await callback.answer()
+        await state.set_state(UrlConverterState.waiting_for_url)
+        if callback.message:
+            await callback.message.answer(
+                "Отправь мне ссылку (YouTube, Pinterest, TikTok, VK, Яндекс Дзен):",
+                reply_markup=get_cancel_keyboard(),
+            )
+        return
+
+    target_format = action.upper()
+    if target_format not in ("MP4", "MP3", "PNG"):
+        await callback.answer("Неизвестный формат", show_alert=True)
+        return
+
+    data = await state.get_data()
+    url = data.get("url")
+    service_name = data.get("service_name", "Сервис")
+
+    if not url:
+        await callback.answer("Ссылка не найдена или сессия устарела. Отправьте ссылку заново.", show_alert=True)
+        return
+
+    await callback.answer(f"Скачиваю и конвертирую в {target_format}...")
+
+    if callback.message:
+        await callback.message.edit_text(
+            f"⏳ Скачиваю и конвертирую из **{service_name}** в `{target_format}`...\n"
+            f"Пожалуйста, подождите немного.",
+            parse_mode="Markdown",
+        )
+
+    try:
+        file_bytes, ext, filename = await asyncio.to_thread(download_url_media, url, target_format)
+
+        if len(file_bytes) > 50 * 1024 * 1024:
+            if callback.message:
+                await callback.message.answer(
+                    "Файл получился больше 50 МБ (лимит Telegram на отправку ботом).\n"
+                    "Попробуйте выбрать другой формат (например, MP3 или PNG).",
+                    reply_markup=get_main_keyboard(),
+                )
+            return
+
+        output_file = BufferedInputFile(file_bytes, filename=filename)
+        caption = (
+            f"Готово! Конвертация ссылки завершена\n\n"
+            f"Сервис: **{service_name}**\n"
+            f"Формат: `{target_format}`\n"
+            f"Размер: {format_size(len(file_bytes))}"
+        )
+
+        if callback.message:
+            if target_format == "MP4":
+                try:
+                    await callback.message.answer_video(
+                        video=output_file,
+                        caption=caption,
+                        reply_markup=get_url_done_keyboard(),
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    await callback.message.answer_document(
+                        document=output_file,
+                        caption=caption,
+                        reply_markup=get_url_done_keyboard(),
+                        parse_mode="Markdown",
+                    )
+            elif target_format == "MP3":
+                try:
+                    await callback.message.answer_audio(
+                        audio=output_file,
+                        caption=caption,
+                        reply_markup=get_url_done_keyboard(),
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    await callback.message.answer_document(
+                        document=output_file,
+                        caption=caption,
+                        reply_markup=get_url_done_keyboard(),
+                        parse_mode="Markdown",
+                    )
+            elif target_format == "PNG":
+                try:
+                    await callback.message.answer_photo(
+                        photo=output_file,
+                        caption=caption,
+                        reply_markup=get_url_done_keyboard(),
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    await callback.message.answer_document(
+                        document=output_file,
+                        caption=caption,
+                        reply_markup=get_url_done_keyboard(),
+                        parse_mode="Markdown",
+                    )
+
+    except Exception as exc:
+        logger.exception("Error during URL conversion")
+        if callback.message:
+            await callback.message.answer(
+                f"Ошибка при обработке ссылки: {exc}\n"
+                f"Проверьте доступность ссылки или попробуйте другой формат.",
+                reply_markup=get_main_keyboard(),
+            )
+
+
 @router.callback_query(F.data.startswith("conv:"))
 async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     action = callback.data.split(":", 1)[1]
@@ -583,5 +771,13 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
 async def handle_unexpected_file_input(message: Message) -> None:
     await message.answer(
         "Отправьте файл без сжатия.",
+        reply_markup=get_cancel_keyboard(),
+    )
+
+
+@router.message(UrlConverterState.waiting_for_url)
+async def handle_unexpected_url_input(message: Message) -> None:
+    await message.answer(
+        "Отправьте ссылку на видео, фото или аудио (YouTube, Pinterest, TikTok, VK, Яндекс Дзен).",
         reply_markup=get_cancel_keyboard(),
     )
