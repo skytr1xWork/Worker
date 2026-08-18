@@ -46,7 +46,7 @@ class ConverterState(StatesGroup):
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
     welcome_text = (
-        "Привет! Я хелпер бот для (и от) skytr1x.\n"
+        "Здарова, щегол (я любя). Я хелпер бот для (и от) skytr1x.\n"
         "Я создан для помощи в быту и для навигации в самой экосистеме skytr1x лол.\n"
         "Внизу будут кнопки с моими умениями вдруг чего"
     )
