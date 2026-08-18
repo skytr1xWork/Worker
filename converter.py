@@ -162,6 +162,59 @@ AUDIO_MIME_TYPES = {
     "audio/ac3": "AC3",
 }
 
+SUPPORTED_VIDEO_FORMATS = {
+    "MP4": {"ext": "mp4", "mime": "video/mp4"},
+    "MKV": {"ext": "mkv", "mime": "video/x-matroska"},
+    "AVI": {"ext": "avi", "mime": "video/x-msvideo"},
+    "MOV": {"ext": "mov", "mime": "video/quicktime"},
+    "WEBM": {"ext": "webm", "mime": "video/webm"},
+    "GIF": {"ext": "gif", "mime": "image/gif"},
+    "FLV": {"ext": "flv", "mime": "video/x-flv"},
+    "WMV": {"ext": "wmv", "mime": "video/x-ms-wmv"},
+    "3GP": {"ext": "3gp", "mime": "video/3gpp"},
+    "MPEG": {"ext": "mpeg", "mime": "video/mpeg"},
+    "TS": {"ext": "ts", "mime": "video/mp2t"},
+    "OGV": {"ext": "ogv", "mime": "video/ogg"},
+    "MP3": {"ext": "mp3", "mime": "audio/mpeg"},
+    "WAV": {"ext": "wav", "mime": "audio/wav"},
+}
+
+VIDEO_EXTENSIONS = {
+    "mp4": "MP4",
+    "m4v": "MP4",
+    "mkv": "MKV",
+    "avi": "AVI",
+    "mov": "MOV",
+    "webm": "WEBM",
+    "flv": "FLV",
+    "wmv": "WMV",
+    "3gp": "3GP",
+    "3g2": "3GP",
+    "mpeg": "MPEG",
+    "mpg": "MPEG",
+    "m2v": "MPEG",
+    "ts": "TS",
+    "m2ts": "TS",
+    "mts": "TS",
+    "ogv": "OGV",
+    "vob": "MPEG",
+}
+
+VIDEO_MIME_TYPES = {
+    "video/mp4": "MP4",
+    "video/x-matroska": "MKV",
+    "video/x-msvideo": "AVI",
+    "video/quicktime": "MOV",
+    "video/webm": "WEBM",
+    "video/x-flv": "FLV",
+    "video/x-ms-wmv": "WMV",
+    "video/3gpp": "3GP",
+    "video/3gpp2": "3GP",
+    "video/mpeg": "MPEG",
+    "video/mp2t": "TS",
+    "video/ogg": "OGV",
+}
+
 
 def normalize_format(fmt: str) -> str:
     """Normalizes format string to standard uppercase key."""
@@ -180,30 +233,47 @@ def normalize_format(fmt: str) -> str:
         return "AIFF"
     if cleaned == "OGA":
         return "OPUS"
+    if cleaned in ("MPG", "M2V", "VOB"):
+        return "MPEG"
+    if cleaned in ("M4V",):
+        return "MP4"
+    if cleaned in ("M2TS", "MTS"):
+        return "TS"
     return cleaned
 
 
 def detect_file_type(filename: str | None = None, mime_type: str | None = None) -> tuple[str | None, str | None]:
     """
-    Detects file category ('image', 'document', 'audio') and format name.
+    Detects file category ('image', 'document', 'audio', 'video') and format name.
     """
     ext = os.path.splitext(filename)[1].lower().lstrip(".") if filename else ""
 
-    # 1. Check audio extension
+    # 1. Check video extension
+    if ext in VIDEO_EXTENSIONS:
+        return "video", VIDEO_EXTENSIONS[ext]
+
+    # 2. Check audio extension
     if ext in AUDIO_EXTENSIONS:
         return "audio", AUDIO_EXTENSIONS[ext]
 
-    # 2. Check image extension
+    # 3. Check image extension
     if ext in IMAGE_EXTENSIONS:
         return "image", IMAGE_EXTENSIONS[ext]
 
-    # 3. Check document extension
+    # 4. Check document extension
     if ext in DOCUMENT_EXTENSIONS:
         return "document", DOCUMENT_EXTENSIONS[ext]
 
     # Check MIME types
     if mime_type:
         mime = mime_type.lower()
+
+        # Video MIME
+        if mime.startswith("video/"):
+            for m_key, f_val in VIDEO_MIME_TYPES.items():
+                if m_key in mime:
+                    return "video", f_val
+            return "video", "MP4"
 
         # Audio MIME
         if mime.startswith("audio/"):
@@ -277,13 +347,91 @@ def decode_text(raw_bytes: bytes) -> str:
 
 
 # ==========================================
-# Audio Converter (using FFmpeg with high compatibility)
+# Video Converter (using FFmpeg)
+# ==========================================
+
+def convert_video(input_bytes: bytes, source_format: str, target_format: str, orig_filename: str | None = None) -> tuple[bytes, str]:
+    """
+    Converts video raw bytes into the requested target format using FFmpeg.
+    Returns (output_bytes, file_extension).
+    """
+    src = normalize_format(source_format)
+    target = normalize_format(target_format)
+
+    if target not in SUPPORTED_VIDEO_FORMATS:
+        raise ValueError(f"Неподдерживаемый целевой видеоформат: {target_format}")
+
+    src_ext = "video"
+    if orig_filename and "." in orig_filename:
+        src_ext = orig_filename.rsplit(".", 1)[-1].lower()
+    elif src in SUPPORTED_VIDEO_FORMATS:
+        src_ext = SUPPORTED_VIDEO_FORMATS[src]["ext"]
+
+    dst_ext = SUPPORTED_VIDEO_FORMATS[target]["ext"]
+
+    with tempfile.NamedTemporaryFile(suffix=f".{src_ext}", delete=False) as src_f:
+        src_f.write(input_bytes)
+        src_path = src_f.name
+
+    with tempfile.NamedTemporaryFile(suffix=f".{dst_ext}", delete=False) as dst_f:
+        dst_path = dst_f.name
+
+    try:
+        cmd = ["ffmpeg", "-y", "-i", src_path]
+        if target == "MP4":
+            cmd.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"])
+        elif target == "MKV":
+            cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-b:a", "128k"])
+        elif target == "MOV":
+            cmd.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k"])
+        elif target == "AVI":
+            cmd.extend(["-c:v", "mpeg4", "-q:v", "4", "-c:a", "libmp3lame", "-b:a", "128k"])
+        elif target == "WEBM":
+            cmd.extend(["-c:v", "libvpx", "-b:v", "800k", "-c:a", "libvorbis"])
+        elif target == "GIF":
+            cmd.extend(["-vf", "fps=12,scale=360:-1:flags=lanczos", "-an"])
+        elif target == "FLV":
+            cmd.extend(["-c:v", "flv1", "-c:a", "libmp3lame", "-ar", "44100"])
+        elif target == "WMV":
+            cmd.extend(["-c:v", "wmv2", "-b:v", "1000k", "-c:a", "wmav2", "-b:a", "128k"])
+        elif target == "3GP":
+            cmd.extend(["-s", "352x288", "-r", "15", "-c:v", "h263", "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1"])
+        elif target == "MPEG":
+            cmd.extend(["-c:v", "mpeg2video", "-c:a", "mp2", "-b:a", "192k"])
+        elif target == "TS":
+            cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-b:a", "128k"])
+        elif target == "OGV":
+            cmd.extend(["-c:v", "libtheora", "-q:v", "5", "-c:a", "libvorbis"])
+        elif target == "MP3":
+            cmd.extend(["-vn", "-c:a", "libmp3lame", "-b:a", "192k", "-ar", "44100", "-ac", "2"])
+        elif target == "WAV":
+            cmd.extend(["-vn", "-c:a", "pcm_s16le", "-ar", "44100", "-ac", "2"])
+
+        cmd.append(dst_path)
+
+        res = subprocess.run(cmd, capture_output=True, timeout=120)
+        if res.returncode != 0:
+            error_msg = res.stderr.decode("utf-8", errors="replace")
+            raise RuntimeError(f"FFmpeg ошибка: {error_msg[-200:]}")
+
+        with open(dst_path, "rb") as out_f:
+            output_bytes = out_f.read()
+
+        return output_bytes, dst_ext
+    finally:
+        if os.path.exists(src_path):
+            os.unlink(src_path)
+        if os.path.exists(dst_path):
+            os.unlink(dst_path)
+
+
+# ==========================================
+# Audio Converter (using FFmpeg)
 # ==========================================
 
 def convert_audio(input_bytes: bytes, source_format: str, target_format: str, orig_filename: str | None = None) -> tuple[bytes, str]:
     """
     Converts audio raw bytes into the requested target format using FFmpeg.
-    Ensures audible volume, proper sample rates, and correct codecs.
     Returns (output_bytes, file_extension).
     """
     src = normalize_format(source_format)
@@ -292,7 +440,6 @@ def convert_audio(input_bytes: bytes, source_format: str, target_format: str, or
     if target not in SUPPORTED_AUDIO_FORMATS:
         raise ValueError(f"Неподдерживаемый целевой аудиоформат: {target_format}")
 
-    # Use original extension if available so FFmpeg knows the demuxer
     src_ext = "audio"
     if orig_filename and "." in orig_filename:
         src_ext = orig_filename.rsplit(".", 1)[-1].lower()

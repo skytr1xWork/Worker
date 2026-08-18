@@ -5,6 +5,7 @@ from converter import (
     SUPPORTED_AUDIO_FORMATS,
     SUPPORTED_DOCUMENT_FORMATS,
     SUPPORTED_IMAGE_FORMATS,
+    SUPPORTED_VIDEO_FORMATS,
     normalize_format,
 )
 
@@ -33,8 +34,11 @@ def get_format_keyboard(source_format: str, category: str = "image") -> InlineKe
             [f for f in ["DOCX", "MD", "TXT", "HTML", "DAT", "CSV", "JSON"] if f != source_fmt],
         )
     elif category == "audio":
-        audio_order = ["MP3", "WAV", "OGG", "OPUS (Голосовое сообщение)", "FLAC", "AAC", "M4A", "WMA", "AIFF", "AMR", "AC3", "MP2"]
+        audio_order = ["MP3", "WAV", "OGG", "OPUS", "FLAC", "AAC", "M4A", "WMA", "AIFF", "AMR", "AC3", "MP2"]
         target_formats = [fmt for fmt in audio_order if fmt != source_fmt]
+    elif category == "video":
+        video_order = ["MP4", "MOV", "WEBM", "AVI", "MKV", "GIF", "MP3", "WAV", "FLV", "WMV", "3GP", "TS", "MPEG", "OGV"]
+        target_formats = [fmt for fmt in video_order if fmt != source_fmt]
     else:
         format_order = ["PNG", "JPG", "WEBP", "BMP", "TIFF", "ICO", "PDF", "GIF"]
         target_formats = [fmt for fmt in format_order if fmt != source_fmt]
