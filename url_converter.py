@@ -81,6 +81,17 @@ def get_ytdlp_cmd() -> list[str]:
     return [sys.executable, "-m", "yt_dlp"]
 
 
+def get_common_ytdlp_args() -> list[str]:
+    """Returns extractor args and spoofing headers that bypass bot checks on cloud servers."""
+    return [
+        "--no-check-certificates",
+        "--geo-bypass",
+        "--extractor-args", "youtube:player_client=android;player_skip=webpage,configs",
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "--no-warnings",
+    ]
+
+
 def detect_service(url: str) -> tuple[str | None, str | None]:
     """
     Detects if the URL belongs to a supported service.
@@ -133,10 +144,9 @@ def get_url_metadata(url: str) -> dict:
     """
     Extracts title, duration, thumbnail from the URL using yt-dlp with fallback.
     """
-    cmd = get_ytdlp_cmd() + [
+    cmd = get_ytdlp_cmd() + get_common_ytdlp_args() + [
         "--dump-json",
         "--no-playlist",
-        "--no-warnings",
         "--ignore-errors",
         url
     ]
@@ -182,7 +192,7 @@ def download_url_media(url: str, target_format: str) -> tuple[bytes, str, str]:
     """
     fmt = target_format.upper().strip()
     target_format = fmt
-    ytdlp_base = get_ytdlp_cmd()
+    ytdlp_base = get_ytdlp_cmd() + get_common_ytdlp_args()
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Case 1: Download PNG thumbnail or image
@@ -268,7 +278,8 @@ def download_url_media(url: str, target_format: str) -> tuple[bytes, str, str]:
                     safe_title = re.sub(r'[\\/*?:"<>|]', '', meta.get("title", "audio"))[:40].strip() or "audio"
                     return audio_b, "mp3", f"{safe_title}.mp3"
 
-            raise RuntimeError(f"Не удалось скачать аудио: {res.stderr[-200:] if res.stderr else 'Неизвестная ошибка'}")
+            error_msg = res.stderr.strip() if res.stderr else "Неизвестная ошибка"
+            raise RuntimeError(f"Не удалось скачать аудио: {error_msg[-250:]}")
 
         # Case 3: Download MP4 Video
         else:
@@ -290,7 +301,8 @@ def download_url_media(url: str, target_format: str) -> tuple[bytes, str, str]:
                     break
 
             if not mp4_path:
-                raise RuntimeError(f"Не удалось скачать видео: {res.stderr[-200:] if res.stderr else 'Неизвестная ошибка'}")
+                error_msg = res.stderr.strip() if res.stderr else "Неизвестная ошибка"
+                raise RuntimeError(f"Не удалось скачать видео: {error_msg[-250:]}")
 
             # Transcode with faststart if needed
             final_mp4 = os.path.join(tmp_dir, "final.mp4")
