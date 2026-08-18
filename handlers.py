@@ -61,6 +61,38 @@ async def cmd_help(message: Message) -> None:
     )
 
 
+@router.message(Command("about"))
+@router.message(F.text == "О создателе")
+async def cmd_about(message: Message) -> None:
+    about_text = (
+        "Я (skytr1x) - программист на Python и С++. Занимаюсь относительно маленькими, но полезными проектами.\n\n"
+        'У меня есть свой <a href="https://github.com/skytr1x">GitHub</a>, но если вы пользователь exteraGram, '
+        'у меня есть <a href="https://t.me/sktrxdev">Телеграм канал</a>, где я выкладываю плагины для этого клиента.'
+    )
+    await message.answer(
+        about_text,
+        reply_markup=get_main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+
+@router.message(Command("support"))
+@router.message(F.text == "Поддержка")
+async def cmd_support(message: Message) -> None:
+    support_text = (
+        "Вы можете меня поддержать просто подписавшись на мой <a href='https://t.me/sktrxdev'>тгк</a> или же поддержать меня материально закинув мне чутка на хлеб через:\n"
+        "TON (GRAM): UQDL0xc0CBLU2_K15rxjpf-dga0f36qXYht-UTlSKESpoNlq\n"
+        "Я буду очень благодарен :3"
+    )
+    await message.answer(
+        support_text,
+        reply_markup=get_main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+
 @router.message(Command("cancel"))
 @router.message(F.text == "Отмена")
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
@@ -78,7 +110,7 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 async def start_converter_mode(message: Message, state: FSMContext) -> None:
     await state.set_state(ConverterState.waiting_for_file)
     prompt_text = (
-        "Отправь мне изображение в любом из следующих форматов:\n PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\nОбязательно без сжатия."
+        "Отправь мне изображение в любом из следующих форматов:\nPNG, JPG, WEBP, BMP, TIFF, ICO, GIF\nОбязательно без сжатия."
     )
     await message.answer(
         prompt_text,
@@ -93,7 +125,6 @@ async def handle_document(message: Message, state: FSMContext) -> None:
     if not doc:
         return
 
-    # Telegram Bot API file download limit is 20MB
     if doc.file_size and doc.file_size > 20 * 1024 * 1024:
         await message.answer(
             "Размер файла превышает 20 МБ.\n"
@@ -114,7 +145,6 @@ async def handle_document(message: Message, state: FSMContext) -> None:
     file_name = doc.file_name or f"image.{detected_format.lower()}"
     file_size_str = format_size(doc.file_size or 0)
 
-    # Store file details in state
     await state.set_state(ConverterState.selecting_format)
     await state.update_data(
         file_id=doc.file_id,
