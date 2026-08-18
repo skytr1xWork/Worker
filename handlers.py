@@ -9,9 +9,11 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from converter import (
+    SUPPORTED_DOCUMENT_FORMATS,
     SUPPORTED_IMAGE_FORMATS,
+    convert_document,
     convert_image,
-    detect_image_format,
+    detect_file_type,
     format_size,
     normalize_format,
 )
@@ -52,10 +54,10 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 @router.message(F.text == "Привет")
 async def cmd_help(message: Message) -> None:
     help_text = (
-            "Я по факту массивный бот хелпер для всего (по крайней мере по задумке), но так же имею пару комманд, которые могут как то тебя заинтересовать:\n"
-            "/support - поддержать любимого skytr1x"
-            "/about - а кто такой ваще ваш skytr1x\n\n"
-            "Пользуйтесь на здоровье, и да, подписок в боте не будет хD"
+        "Я по факту массивный бот хелпер для всего (по крайней мере по задумке), но так же имею пару комманд, которые могут как то тебя заинтересовать:\n\n"
+        "/support - поддержать любимого skytr1x\n"
+        "/about - а кто такой ваще ваш skytr1x\n\n"
+        "Пользуйтесь на здоровье, и да, подписок в боте не будет хD"
     )
     await message.answer(
         help_text,
@@ -76,7 +78,7 @@ async def cmd_about(message: Message) -> None:
         about_text,
         reply_markup=get_main_keyboard(),
         parse_mode="HTML",
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
     )
 
 
@@ -92,7 +94,7 @@ async def cmd_support(message: Message) -> None:
         support_text,
         reply_markup=get_main_keyboard(),
         parse_mode="HTML",
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
     )
 
 
@@ -113,12 +115,14 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 async def start_converter_mode(message: Message, state: FSMContext) -> None:
     await state.set_state(ConverterState.waiting_for_file)
     prompt_text = (
-        "Отправь мне изображение в любом из следующих форматов:\nPNG, JPG, WEBP, BMP, TIFF, ICO, GIF\nОбязательно без сжатия."
+        "Отправь мне файл (изображение или документ):\n"
+        "• Картинки: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
+        "• Текст/документы: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
+        "Обязательно без сжатия."
     )
     await message.answer(
         prompt_text,
         reply_markup=get_cancel_keyboard(),
-        parse_mode="Markdown",
     )
 
 
@@ -135,17 +139,18 @@ async def handle_document(message: Message, state: FSMContext) -> None:
         )
         return
 
-    detected_format = detect_image_format(doc.file_name, doc.mime_type)
+    category, detected_format = detect_file_type(doc.file_name, doc.mime_type)
 
-    if not detected_format:
+    if not detected_format or not category:
         await message.answer(
-            f"Файл «{doc.file_name or 'документ'}» в не поддерживаемом формате.\n\n"
-            "Пожалуйста, отправьте изображение формата **PNG, JPG, WEBP, BMP, TIFF, ICO, GIF**.",
-            parse_mode="Markdown",
+            f"Файл «{doc.file_name or 'документ'}» в неподдерживаемом формате.\n\n"
+            "Поддерживаемые форматы:\n"
+            "• Картинки: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
+            "• Текст/документы: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML",
         )
         return
 
-    file_name = doc.file_name or f"image.{detected_format.lower()}"
+    file_name = doc.file_name or f"file.{detected_format.lower()}"
     file_size_str = format_size(doc.file_size or 0)
 
     await state.set_state(ConverterState.selecting_format)
@@ -153,6 +158,7 @@ async def handle_document(message: Message, state: FSMContext) -> None:
         file_id=doc.file_id,
         file_name=file_name,
         source_format=detected_format,
+        category=category,
         file_size=doc.file_size or 0,
     )
 
@@ -165,7 +171,7 @@ async def handle_document(message: Message, state: FSMContext) -> None:
 
     await message.answer(
         caption,
-        reply_markup=get_format_keyboard(detected_format),
+        reply_markup=get_format_keyboard(detected_format, category=category),
         parse_mode="Markdown",
     )
 
@@ -191,20 +197,24 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
         await state.set_state(ConverterState.waiting_for_file)
         if callback.message:
             await callback.message.answer(
-                "Отправь мне изображение в любом из следующих форматов:\n PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\nОбязательно без сжатия.",
+                "Отправь мне файл (изображение или документ):\n"
+                "• Картинки: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
+                "• Текст/документы: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
+                "Обязательно без сжатия.",
                 reply_markup=get_cancel_keyboard(),
             )
         return
 
     target_format = normalize_format(action)
-    if target_format not in SUPPORTED_IMAGE_FORMATS:
+    if target_format not in SUPPORTED_IMAGE_FORMATS and target_format not in SUPPORTED_DOCUMENT_FORMATS:
         await callback.answer("Неизвестный формат", show_alert=True)
         return
 
     data = await state.get_data()
     file_id = data.get("file_id")
-    orig_filename = data.get("file_name", "image")
+    orig_filename = data.get("file_name", "file")
     source_format = data.get("source_format", "UNKNOWN")
+    category = data.get("category", "image")
 
     if not file_id:
         await callback.answer("Файл не найден или сессия устарела. Отправьте файл заново.", show_alert=True)
@@ -219,7 +229,6 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
         )
 
     try:
-        # Download file
         file_info = await bot.get_file(file_id)
         if not file_info.file_path:
             raise ValueError("Не удалось получить путь к файлу от Telegram")
@@ -228,10 +237,12 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
         await bot.download_file(file_info.file_path, destination=file_stream)
         input_bytes = file_stream.getvalue()
 
-        # Convert image
-        output_bytes, ext = convert_image(input_bytes, target_format)
+        if category == "document" or target_format in SUPPORTED_DOCUMENT_FORMATS:
+            output_bytes, ext = convert_document(input_bytes, source_format, target_format)
+        else:
+            output_bytes, ext = convert_image(input_bytes, target_format)
 
-        base_name = os.path.splitext(orig_filename)[0] or "converted_image"
+        base_name = os.path.splitext(orig_filename)[0] or "converted_file"
         new_filename = f"{base_name}.{ext}"
 
         output_file = BufferedInputFile(output_bytes, filename=new_filename)
@@ -264,6 +275,6 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
 @router.message(ConverterState.waiting_for_file)
 async def handle_unexpected_file_input(message: Message) -> None:
     await message.answer(
-        "Отправьте фото файлом без сжатия.",
+        "Отправьте файл без сжатия.",
         reply_markup=get_cancel_keyboard(),
     )

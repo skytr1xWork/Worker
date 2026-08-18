@@ -1,6 +1,11 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
-from converter import SUPPORTED_IMAGE_FORMATS, normalize_format
+from converter import (
+    DOCUMENT_TARGETS,
+    SUPPORTED_DOCUMENT_FORMATS,
+    SUPPORTED_IMAGE_FORMATS,
+    normalize_format,
+)
 
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
@@ -17,17 +22,23 @@ def get_cancel_keyboard() -> ReplyKeyboardMarkup:
     return builder.as_markup(resize_keyboard=True)
 
 
-def get_format_keyboard(source_format: str) -> InlineKeyboardMarkup:
+def get_format_keyboard(source_format: str, category: str = "image") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     source_fmt = normalize_format(source_format)
 
-    format_order = ["PNG", "JPG", "WEBP", "BMP", "TIFF", "ICO", "PDF", "GIF"]
+    if category == "document":
+        target_formats = DOCUMENT_TARGETS.get(
+            source_fmt,
+            [f for f in ["DOCX", "MD", "TXT", "HTML", "DAT", "CSV", "JSON"] if f != source_fmt],
+        )
+    else:
+        format_order = ["PNG", "JPG", "WEBP", "BMP", "TIFF", "ICO", "PDF", "GIF"]
+        target_formats = [fmt for fmt in format_order if fmt != source_fmt]
 
-    for fmt in format_order:
-        if fmt != source_fmt:
-            builder.button(text=f"{fmt}", callback_data=f"conv:{fmt}")
+    for fmt in target_formats:
+        builder.button(text=f"{fmt}", callback_data=f"conv:{fmt}")
 
-    builder.adjust(3, 3, 2)
+    builder.adjust(3, 3, 3)
     builder.row(InlineKeyboardButton(text="Отмена", callback_data="conv:cancel"))
     return builder.as_markup()
 
