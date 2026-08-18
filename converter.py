@@ -4,10 +4,15 @@ import io
 import json
 import os
 import re
+import subprocess
+import tempfile
 from docx import Document
 import markdown
 from PIL import Image
 
+# ==========================================
+# Image Formats
+# ==========================================
 SUPPORTED_IMAGE_FORMATS = {
     "PNG": {"ext": "png", "mime": "image/png"},
     "JPG": {"ext": "jpg", "mime": "image/jpeg"},
@@ -45,6 +50,9 @@ IMAGE_MIME_TYPES = {
     "image/gif": "GIF",
 }
 
+# ==========================================
+# Document Formats
+# ==========================================
 SUPPORTED_DOCUMENT_FORMATS = {
     "DOCX": {"ext": "docx", "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
     "MD": {"ext": "md", "mime": "text/markdown"},
@@ -99,6 +107,60 @@ DOCUMENT_TARGETS = {
     "HTML": ["MD", "TXT", "DOCX", "JSON", "DAT", "LOG"],
 }
 
+# ==========================================
+# Audio Formats
+# ==========================================
+SUPPORTED_AUDIO_FORMATS = {
+    "MP3": {"ext": "mp3", "mime": "audio/mpeg"},
+    "WAV": {"ext": "wav", "mime": "audio/wav"},
+    "OGG": {"ext": "ogg", "mime": "audio/ogg"},
+    "OPUS": {"ext": "opus", "mime": "audio/opus"},
+    "FLAC": {"ext": "flac", "mime": "audio/flac"},
+    "AAC": {"ext": "aac", "mime": "audio/aac"},
+    "M4A": {"ext": "m4a", "mime": "audio/mp4"},
+    "WMA": {"ext": "wma", "mime": "audio/x-ms-wma"},
+    "AIFF": {"ext": "aiff", "mime": "audio/aiff"},
+    "AMR": {"ext": "amr", "mime": "audio/amr"},
+    "AC3": {"ext": "ac3", "mime": "audio/ac3"},
+    "MP2": {"ext": "mp2", "mime": "audio/mp2"},
+}
+
+AUDIO_EXTENSIONS = {
+    "mp3": "MP3",
+    "wav": "WAV",
+    "ogg": "OGG",
+    "opus": "OPUS",
+    "flac": "FLAC",
+    "aac": "AAC",
+    "m4a": "M4A",
+    "wma": "WMA",
+    "aiff": "AIFF",
+    "aif": "AIFF",
+    "amr": "AMR",
+    "ac3": "AC3",
+    "mp2": "MP2",
+}
+
+AUDIO_MIME_TYPES = {
+    "audio/mpeg": "MP3",
+    "audio/mp3": "MP3",
+    "audio/wav": "WAV",
+    "audio/x-wav": "WAV",
+    "audio/ogg": "OGG",
+    "audio/opus": "OPUS",
+    "audio/flac": "FLAC",
+    "audio/x-flac": "FLAC",
+    "audio/aac": "AAC",
+    "audio/mp4": "M4A",
+    "audio/x-m4a": "M4A",
+    "audio/x-ms-wma": "WMA",
+    "audio/aiff": "AIFF",
+    "audio/x-aiff": "AIFF",
+    "audio/amr": "AMR",
+    "audio/ac3": "AC3",
+    "audio/x-opus+ogg": "OPUS",
+}
+
 
 def normalize_format(fmt: str) -> str:
     """Normalizes format string to standard uppercase key."""
@@ -113,26 +175,50 @@ def normalize_format(fmt: str) -> str:
         return "MD"
     if cleaned == "HTM":
         return "HTML"
+    if cleaned == "AIF":
+        return "AIFF"
     return cleaned
 
 
 def detect_file_type(filename: str | None = None, mime_type: str | None = None) -> tuple[str | None, str | None]:
     """
-    Detects file category and format.
-    Returns (category, format_name) where category is 'image' or 'document'.
+    Detects file category ('image', 'document', 'audio') and format name.
     """
     ext = os.path.splitext(filename)[1].lower().lstrip(".") if filename else ""
 
-    # Check extension first
+    # 1. Check audio extension
+    if ext in AUDIO_EXTENSIONS:
+        return "audio", AUDIO_EXTENSIONS[ext]
+
+    # 2. Check image extension
     if ext in IMAGE_EXTENSIONS:
         return "image", IMAGE_EXTENSIONS[ext]
+
+    # 3. Check document extension
     if ext in DOCUMENT_EXTENSIONS:
         return "document", DOCUMENT_EXTENSIONS[ext]
 
-    # Check MIME type
+    # Check MIME types
     if mime_type:
         mime = mime_type.lower()
-        if mime in IMAGE_MIME_TYPES or mime.startswith("image/"):
+
+        # Audio MIME
+        if mime.startswith("audio/"):
+            for m_key, f_val in AUDIO_MIME_TYPES.items():
+                if m_key in mime:
+                    return "audio", f_val
+            if "opus" in mime:
+                return "audio", "OPUS"
+            if "ogg" in mime:
+                return "audio", "OGG"
+            if "flac" in mime:
+                return "audio", "FLAC"
+            if "wav" in mime:
+                return "audio", "WAV"
+            return "audio", "MP3"
+
+        # Image MIME
+        if mime.startswith("image/"):
             for m_key, f_val in IMAGE_MIME_TYPES.items():
                 if m_key in mime:
                     return "image", f_val
@@ -144,6 +230,7 @@ def detect_file_type(filename: str | None = None, mime_type: str | None = None) 
                 return "image", "WEBP"
             return "image", "PNG"
 
+        # Document MIME
         if mime in DOCUMENT_MIME_TYPES:
             return "document", DOCUMENT_MIME_TYPES[mime]
         if "wordprocessingml" in mime:
@@ -185,6 +272,76 @@ def decode_text(raw_bytes: bytes) -> str:
             continue
     return raw_bytes.decode("utf-8", errors="replace")
 
+
+# ==========================================
+# Audio Converter (using FFmpeg)
+# ==========================================
+
+def convert_audio(input_bytes: bytes, source_format: str, target_format: str) -> tuple[bytes, str]:
+    """
+    Converts audio raw bytes into the requested target format using FFmpeg.
+    Returns (output_bytes, file_extension).
+    """
+    src = normalize_format(source_format)
+    target = normalize_format(target_format)
+
+    if target not in SUPPORTED_AUDIO_FORMATS:
+        raise ValueError(f"Неподдерживаемый целевой аудиоформат: {target_format}")
+
+    src_ext = SUPPORTED_AUDIO_FORMATS.get(src, {}).get("ext", "tmp")
+    dst_ext = SUPPORTED_AUDIO_FORMATS[target]["ext"]
+
+    with tempfile.NamedTemporaryFile(suffix=f".{src_ext}", delete=False) as src_f:
+        src_f.write(input_bytes)
+        src_path = src_f.name
+
+    with tempfile.NamedTemporaryFile(suffix=f".{dst_ext}", delete=False) as dst_f:
+        dst_path = dst_f.name
+
+    try:
+        cmd = ["ffmpeg", "-y", "-i", src_path, "-vn"]
+        if target == "MP3":
+            cmd.extend(["-c:a", "libmp3lame", "-q:a", "2"])
+        elif target == "OPUS":
+            cmd.extend(["-c:a", "libopus", "-b:a", "128k"])
+        elif target == "OGG":
+            cmd.extend(["-c:a", "libvorbis", "-q:a", "4"])
+        elif target == "FLAC":
+            cmd.extend(["-c:a", "flac"])
+        elif target in ("AAC", "M4A"):
+            cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+        elif target == "WAV":
+            cmd.extend(["-c:a", "pcm_s16le"])
+        elif target == "AMR":
+            cmd.extend(["-ar", "8000", "-ac", "1", "-c:a", "libopencore_amrnb"])
+        elif target == "AIFF":
+            cmd.extend(["-c:a", "pcm_s16be"])
+        elif target == "AC3":
+            cmd.extend(["-c:a", "ac3", "-b:a", "192k"])
+        elif target == "MP2":
+            cmd.extend(["-c:a", "mp2", "-b:a", "192k"])
+
+        cmd.append(dst_path)
+
+        res = subprocess.run(cmd, capture_output=True, timeout=60)
+        if res.returncode != 0:
+            error_msg = res.stderr.decode("utf-8", errors="replace")
+            raise RuntimeError(f"FFmpeg ошибка: {error_msg[-200:]}")
+
+        with open(dst_path, "rb") as out_f:
+            output_bytes = out_f.read()
+
+        return output_bytes, dst_ext
+    finally:
+        if os.path.exists(src_path):
+            os.unlink(src_path)
+        if os.path.exists(dst_path):
+            os.unlink(dst_path)
+
+
+# ==========================================
+# Image Converter
+# ==========================================
 
 def convert_image(input_bytes: bytes, target_format: str) -> tuple[bytes, str]:
     """
@@ -259,11 +416,11 @@ def convert_image(input_bytes: bytes, target_format: str) -> tuple[bytes, str]:
 
 
 # ==========================================
-# Beautiful Responsive HTML Page Generator
+# Responsive HTML Page Template
 # ==========================================
 
 def _wrap_in_readable_html_template(body_html: str, title: str = "Документ") -> str:
-    """Wraps HTML content in a modern, reader-friendly, responsive styling."""
+    """Wraps HTML content in a modern, reader-friendly styling with signature footer."""
     return f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -413,7 +570,7 @@ def _wrap_in_readable_html_template(body_html: str, title: str = "Докумен
 
 
 # ==========================================
-# Advanced Structured JSON Converters
+# Structured JSON Converters
 # ==========================================
 
 def _infer_value_type(val: str):
@@ -438,11 +595,7 @@ def _infer_value_type(val: str):
 
 
 def text_to_structured_json(text: str) -> str:
-    """
-    Intelligently parses plain text into structured, readable JSON:
-    - Automatically detects key-value configs, INI sections, logs, bullet lists, or document paragraphs.
-    """
-    # 1. Check if already valid JSON
+    """Intelligently parses plain text into structured, readable JSON."""
     try:
         parsed = json.loads(text)
         return json.dumps(parsed, ensure_ascii=False, indent=2)
@@ -452,7 +605,6 @@ def text_to_structured_json(text: str) -> str:
     lines = text.splitlines()
     non_empty_lines = [l.strip() for l in lines if l.strip()]
 
-    # 2. Check for key-value or INI configurations (e.g. key: val or key = val)
     kv_pattern = re.compile(r'^([a-zA-Z0-9_\-\.\s]+)\s*[:=]\s*(.*)$')
     key_values = {}
     sections = {}
@@ -475,7 +627,6 @@ def text_to_structured_json(text: str) -> str:
             key_values[k] = val_cast
             kv_count += 1
 
-    # 3. Check for Log lines (Timestamp + Level + Message)
     log_pattern = re.compile(r'^(\d{4}[-/.]\d{2}[-/.]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)\s*(?:\[(\w+)\]|(\w+):)?\s*(.*)$')
     log_entries = []
     for line in non_empty_lines:
@@ -516,7 +667,6 @@ def text_to_structured_json(text: str) -> str:
                 "data": key_values
             }
     else:
-        # Structured paragraphs and lines
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         result = {
             "meta": meta,
@@ -564,7 +714,6 @@ def markdown_to_structured_json(md_text: str) -> str:
             code_buffer.append(line)
             continue
 
-        # Header check
         if stripped.startswith("#"):
             if current_list:
                 current_section["lists"].append(current_list)
@@ -583,7 +732,6 @@ def markdown_to_structured_json(md_text: str) -> str:
             }
             continue
 
-        # List check
         if stripped.startswith(("- ", "* ", "+ ")) or (len(stripped) > 2 and stripped[0].isdigit() and stripped[1:3] in (". ", ") ")):
             item_text = re.sub(r'^(?:[-*+]|\d+[.)])\s+', '', stripped)
             current_list.append(item_text)
@@ -679,7 +827,7 @@ def csv_to_structured_json(csv_text: str) -> str:
 
 
 # ==========================================
-# Advanced Readable HTML Converters
+# Readable HTML Converters
 # ==========================================
 
 def text_to_readable_html(text: str, title: str = "Документ") -> str:
@@ -687,7 +835,6 @@ def text_to_readable_html(text: str, title: str = "Документ") -> str:
     lines = text.splitlines()
     non_empty = [l.strip() for l in lines if l.strip()]
 
-    # Check if log file
     log_pattern = re.compile(r'^(\d{4}[-/.]\d{2}[-/.]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)\s*(?:\[(\w+)\]|(\w+):)?\s*(.*)$')
     is_log = sum(1 for l in non_empty if log_pattern.match(l)) >= len(non_empty) * 0.6 if non_empty else False
 
@@ -719,14 +866,12 @@ def text_to_readable_html(text: str, title: str = "Документ") -> str:
             if not para_clean:
                 continue
 
-            # Auto linkify URLs
             para_escaped = html.escape(para_clean)
             para_linked = re.sub(
                 r'(https?://[^\s<>"]+|www\.[^\s<>"]+)',
                 r'<a href="\1" target="_blank" rel="noopener">\1</a>',
                 para_escaped
             )
-            # Preserve single line breaks inside paragraph
             para_html = para_linked.replace("\n", "<br>")
             body_parts.append(f"<p>{para_html}</p>")
 
@@ -1043,7 +1188,7 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
     # Non-DOCX source: decode text
     text_content = decode_text(input_bytes)
 
-    # 2. Target JSON (Smart Structured Conversion)
+    # 2. Target JSON
     if target == "JSON":
         if src == "MD":
             json_str = markdown_to_structured_json(text_content)
@@ -1053,7 +1198,7 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
             json_str = text_to_structured_json(text_content)
         return json_str.encode("utf-8"), "json"
 
-    # 3. Target HTML (Readable styled webpage)
+    # 3. Target HTML
     if target == "HTML":
         if src == "MD":
             html_str = markdown_to_readable_html(text_content)

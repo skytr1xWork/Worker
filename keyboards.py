@@ -2,6 +2,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeybo
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from converter import (
     DOCUMENT_TARGETS,
+    SUPPORTED_AUDIO_FORMATS,
     SUPPORTED_DOCUMENT_FORMATS,
     SUPPORTED_IMAGE_FORMATS,
     normalize_format,
@@ -31,6 +32,9 @@ def get_format_keyboard(source_format: str, category: str = "image") -> InlineKe
             source_fmt,
             [f for f in ["DOCX", "MD", "TXT", "HTML", "DAT", "CSV", "JSON"] if f != source_fmt],
         )
+    elif category == "audio":
+        audio_order = ["MP3", "WAV", "OGG", "OPUS", "FLAC", "AAC", "M4A", "WMA", "AIFF", "AMR", "AC3", "MP2"]
+        target_formats = [fmt for fmt in audio_order if fmt != source_fmt]
     else:
         format_order = ["PNG", "JPG", "WEBP", "BMP", "TIFF", "ICO", "PDF", "GIF"]
         target_formats = [fmt for fmt in format_order if fmt != source_fmt]

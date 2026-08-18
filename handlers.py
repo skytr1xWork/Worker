@@ -9,8 +9,12 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from converter import (
+    AUDIO_EXTENSIONS,
+    AUDIO_MIME_TYPES,
+    SUPPORTED_AUDIO_FORMATS,
     SUPPORTED_DOCUMENT_FORMATS,
     SUPPORTED_IMAGE_FORMATS,
+    convert_audio,
     convert_document,
     convert_image,
     detect_file_type,
@@ -115,9 +119,10 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 async def start_converter_mode(message: Message, state: FSMContext) -> None:
     await state.set_state(ConverterState.waiting_for_file)
     prompt_text = (
-        "Отправь мне файл (изображение или документ):\n"
+        "Отправь мне файл (изображение, документ или аудио):\n"
         "• Картинки: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
         "• Текст/документы: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
+        "• Аудио: MP3, WAV, OGG, OPUS, FLAC, AAC, M4A, WMA, AIFF, AMR, AC3, MP2\n"
         "Обязательно без сжатия."
     )
     await message.answer(
@@ -146,7 +151,8 @@ async def handle_document(message: Message, state: FSMContext) -> None:
             f"Файл «{doc.file_name or 'документ'}» в неподдерживаемом формате.\n\n"
             "Поддерживаемые форматы:\n"
             "• Картинки: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
-            "• Текст/документы: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML",
+            "• Текст/документы: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
+            "• Аудио: MP3, WAV, OGG, OPUS, FLAC, AAC, M4A, WMA, AIFF, AMR, AC3, MP2",
         )
         return
 
@@ -176,6 +182,96 @@ async def handle_document(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.message(F.audio)
+async def handle_audio(message: Message, state: FSMContext) -> None:
+    audio = message.audio
+    if not audio:
+        return
+
+    if audio.file_size and audio.file_size > 20 * 1024 * 1024:
+        await message.answer(
+            "Размер файла превышает 20 МБ.\n"
+            "Пожалуйста, отправьте файл меньшего размера."
+        )
+        return
+
+    detected_format = "MP3"
+    if audio.file_name:
+        ext = os.path.splitext(audio.file_name)[1].lower().lstrip(".")
+        if ext in AUDIO_EXTENSIONS:
+            detected_format = AUDIO_EXTENSIONS[ext]
+    elif audio.mime_type:
+        for m_k, f_v in AUDIO_MIME_TYPES.items():
+            if m_k in audio.mime_type.lower():
+                detected_format = f_v
+                break
+
+    file_name = audio.file_name or f"audio.{detected_format.lower()}"
+    file_size_str = format_size(audio.file_size or 0)
+
+    await state.set_state(ConverterState.selecting_format)
+    await state.update_data(
+        file_id=audio.file_id,
+        file_name=file_name,
+        source_format=detected_format,
+        category="audio",
+        file_size=audio.file_size or 0,
+    )
+
+    caption = (
+        f"Аудиофайл получен\n\n"
+        f"Имя: `{file_name}`\n"
+        f"Формат: `{detected_format}`\n\n"
+        f"Выберите в какой формат его нужно конвертировать:"
+    )
+
+    await message.answer(
+        caption,
+        reply_markup=get_format_keyboard(detected_format, category="audio"),
+        parse_mode="Markdown",
+    )
+
+
+@router.message(F.voice)
+async def handle_voice(message: Message, state: FSMContext) -> None:
+    voice = message.voice
+    if not voice:
+        return
+
+    if voice.file_size and voice.file_size > 20 * 1024 * 1024:
+        await message.answer(
+            "Размер файла превышает 20 МБ.\n"
+            "Пожалуйста, отправьте файл меньшего размера."
+        )
+        return
+
+    file_name = "voice.opus"
+    detected_format = "OPUS"
+    file_size_str = format_size(voice.file_size or 0)
+
+    await state.set_state(ConverterState.selecting_format)
+    await state.update_data(
+        file_id=voice.file_id,
+        file_name=file_name,
+        source_format=detected_format,
+        category="audio",
+        file_size=voice.file_size or 0,
+    )
+
+    caption = (
+        f"Голосовое сообщение получено\n\n"
+        f"Формат: `OPUS`\n"
+        f"Размер: {file_size_str}\n\n"
+        f"Выберите в какой формат его нужно конвертировать:"
+    )
+
+    await message.answer(
+        caption,
+        reply_markup=get_format_keyboard(detected_format, category="audio"),
+        parse_mode="Markdown",
+    )
+
+
 @router.message(F.photo)
 async def handle_photo(message: Message) -> None:
     await message.answer("Отправьте фото файлом без сжатия.")
@@ -197,16 +293,21 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
         await state.set_state(ConverterState.waiting_for_file)
         if callback.message:
             await callback.message.answer(
-                "Отправь мне файл (изображение или документ):\n"
+                "Отправь мне файл (изображение, документ или аудио):\n"
                 "• Картинки: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
                 "• Текст/документы: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
+                "• Аудио: MP3, WAV, OGG, OPUS, FLAC, AAC, M4A, WMA, AIFF, AMR, AC3, MP2\n"
                 "Обязательно без сжатия.",
                 reply_markup=get_cancel_keyboard(),
             )
         return
 
     target_format = normalize_format(action)
-    if target_format not in SUPPORTED_IMAGE_FORMATS and target_format not in SUPPORTED_DOCUMENT_FORMATS:
+    if (
+        target_format not in SUPPORTED_IMAGE_FORMATS
+        and target_format not in SUPPORTED_DOCUMENT_FORMATS
+        and target_format not in SUPPORTED_AUDIO_FORMATS
+    ):
         await callback.answer("Неизвестный формат", show_alert=True)
         return
 
@@ -237,7 +338,10 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
         await bot.download_file(file_info.file_path, destination=file_stream)
         input_bytes = file_stream.getvalue()
 
-        if category == "document" or target_format in SUPPORTED_DOCUMENT_FORMATS:
+        # Convert based on category
+        if category == "audio" or target_format in SUPPORTED_AUDIO_FORMATS:
+            output_bytes, ext = convert_audio(input_bytes, source_format, target_format)
+        elif category == "document" or target_format in SUPPORTED_DOCUMENT_FORMATS:
             output_bytes, ext = convert_document(input_bytes, source_format, target_format)
         else:
             output_bytes, ext = convert_image(input_bytes, target_format)
