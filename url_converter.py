@@ -86,19 +86,20 @@ def get_ytdlp_cmd() -> list[str]:
     return [sys.executable, "-m", "yt_dlp"]
 
 
-def get_common_ytdlp_args() -> list[str]:
+def get_common_ytdlp_args(is_youtube: bool = False) -> list[str]:
     """Returns low-memory extractor args and spoofing headers that bypass bot checks on cloud servers."""
-    return [
+    args = [
         "--no-check-certificates",
         "--geo-bypass",
-        "--extractor-args", "youtube:player_client=android;player_skip=webpage,configs",
         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "--no-warnings",
-        "--buffer-size", "16K",
-        "--http-chunk-size", "5M",
         "--max-filesize", "48M",
-        "--concurrent-fragments", "1",
     ]
+    if is_youtube:
+        args.extend([
+            "--extractor-args", "youtube:player_client=android;player_skip=webpage,configs"
+        ])
+    return args
 
 
 def detect_service(url: str) -> tuple[str | None, str | None]:
@@ -120,40 +121,74 @@ def extract_first_url(text: str) -> str | None:
     return match.group(0) if match else None
 
 
-def _get_pinterest_image_url(url: str) -> tuple[str | None, str | None]:
-    """Directly extracts high-res image URL and title from Pinterest webpage."""
+def _get_pinterest_media(url: str) -> dict:
+    """
+    Directly extracts direct video and image URLs from Pinterest pin page with gzip support.
+    Returns dict with keys: video_url, image_url, title.
+    """
     try:
+        import gzip
         req = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
             }
         )
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            html_content = resp.read().decode("utf-8", errors="replace")
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            if resp.info().get("Content-Encoding") == "gzip":
+                raw_data = gzip.decompress(resp.read())
+            else:
+                raw_data = resp.read()
+            html = raw_data.decode("utf-8", errors="replace")
 
-        # Search og:image and title
-        og_img_match = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', html_content)
-        title_match = re.search(r'<meta\s+property=["\']og:title["\']\s+content=["\']([^"\']+)["\']', html_content)
+        # 1. Video URLs
+        videos = re.findall(r'https://v1\.pinimg\.com/videos/[a-zA-Z0-9._/\-]+\.(?:mp4|m3u8)', html)
+        mp4_videos = [v for v in videos if v.endswith('.mp4')]
+        video_url = mp4_videos[0] if mp4_videos else (videos[0] if videos else None)
 
-        img_url = og_img_match.group(1) if og_img_match else None
-        title = title_match.group(1) if title_match else "Pinterest"
+        # 2. Image URLs
+        images = re.findall(r'https://i\.pinimg\.com/(?:originals|[0-9]+x)/[a-zA-Z0-9/_.\-]+\.(?:jpg|png|webp)', html)
+        orig_images = [img for img in images if '/originals/' in img]
+        image_url = orig_images[0] if orig_images else (images[0] if images else None)
 
-        # Upgrade Pinterest thumbnail URL to originals if possible
-        if img_url:
-            img_url = re.sub(r'/(?:236x|474x|736x)/', '/originals/', img_url)
+        # 3. Title
+        title_m = re.search(r'<title>([^<]+)</title>', html)
+        title = title_m.group(1).replace(' | Pinterest', '').strip() if title_m else "Pinterest Pin"
 
-        return img_url, title
+        return {
+            "video_url": video_url,
+            "image_url": image_url,
+            "title": title
+        }
     except Exception as e:
-        logger.warning(f"Pinterest image scrape failed: {e}")
-        return None, None
+        logger.warning(f"Pinterest scrape error: {e}")
+        return {
+            "video_url": None,
+            "image_url": None,
+            "title": "Pinterest Pin"
+        }
 
 
 def get_url_metadata(url: str) -> dict:
     """
-    Extracts title, duration, thumbnail from the URL using yt-dlp with fallback.
+    Extracts title, duration, thumbnail from the URL with fallback.
     """
-    cmd = get_ytdlp_cmd() + get_common_ytdlp_args() + [
+    is_yt = "youtube" in url or "youtu.be" in url
+
+    # Pinterest direct metadata
+    if "pinterest" in url or "pin.it" in url:
+        p_media = _get_pinterest_media(url)
+        return {
+            "title": p_media.get("title") or "Pinterest Pin",
+            "thumbnail": p_media.get("image_url"),
+            "duration": None,
+            "uploader": "Pinterest",
+            "is_live": False
+        }
+
+    cmd = get_ytdlp_cmd() + get_common_ytdlp_args(is_youtube=is_yt) + [
         "--dump-json",
         "--no-playlist",
         "--ignore-errors",
@@ -173,18 +208,6 @@ def get_url_metadata(url: str) -> dict:
     except Exception as e:
         logger.warning(f"Failed to get metadata with yt-dlp: {e}")
 
-    # Fallback for Pinterest
-    if "pinterest" in url or "pin.it" in url:
-        p_img, p_title = _get_pinterest_image_url(url)
-        if p_img:
-            return {
-                "title": p_title or "Pinterest Pin",
-                "thumbnail": p_img,
-                "duration": None,
-                "uploader": "Pinterest",
-                "is_live": False
-            }
-
     return {
         "title": "Медиафайл",
         "thumbnail": None,
@@ -201,28 +224,82 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
     """
     fmt = target_format.upper().strip()
     target_format = fmt
-    ytdlp_base = get_ytdlp_cmd() + get_common_ytdlp_args()
+    is_yt = "youtube" in url or "youtu.be" in url
+    is_pin = "pinterest" in url or "pin.it" in url
+
+    # -------------------------------------------------------------
+    # PINTEREST DIRECT PIPELINE (Ultra-fast, zero yt-dlp format errors)
+    # -------------------------------------------------------------
+    if is_pin:
+        p_media = _get_pinterest_media(url)
+        video_url = p_media.get("video_url")
+        image_url = p_media.get("image_url")
+        raw_title = p_media.get("title") or "pinterest"
+        safe_title = re.sub(r'[\\/*?:"<>|]', '', raw_title)[:40].strip() or "pinterest"
+
+        if target_format == "PNG":
+            img_target = image_url or video_url
+            if not img_target:
+                raise RuntimeError("Не удалось найти изображение в данном пине.")
+            out_png = os.path.join(output_dir, f"{safe_title}.png")
+            req = urllib.request.Request(img_target, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                with Image.open(resp) as img:
+                    img.save(out_png, format="PNG")
+            return out_png, "png", f"{safe_title}.png", os.path.getsize(out_png)
+
+        elif target_format == "MP4":
+            if video_url:
+                out_mp4 = os.path.join(output_dir, f"{safe_title}.mp4")
+                req = urllib.request.Request(video_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=30) as resp, open(out_mp4, "wb") as f:
+                    shutil.copyfileobj(resp, f)
+                return out_mp4, "mp4", f"{safe_title}.mp4", os.path.getsize(out_mp4)
+            elif image_url:
+                # User asked for MP4 on an image pin: create short 3s MP4 clip from image
+                img_temp = os.path.join(output_dir, "temp_img.jpg")
+                out_mp4 = os.path.join(output_dir, f"{safe_title}.mp4")
+                req = urllib.request.Request(image_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=15) as resp, open(img_temp, "wb") as f:
+                    shutil.copyfileobj(resp, f)
+                subprocess.run([
+                    "ffmpeg", "-y", "-loop", "1", "-i", img_temp,
+                    "-threads", "1",
+                    "-c:v", "libx264", "-t", "3", "-pix_fmt", "yuv420p",
+                    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                    "-movflags", "+faststart",
+                    out_mp4
+                ], capture_output=True, timeout=30)
+                if os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 0:
+                    return out_mp4, "mp4", f"{safe_title}.mp4", os.path.getsize(out_mp4)
+                raise RuntimeError("В этом пине только статическое фото. Выберите формат PNG.")
+            else:
+                raise RuntimeError("Не удалось извлечь медиафайл из Pinterest.")
+
+        elif target_format == "MP3":
+            if video_url:
+                temp_vid = os.path.join(output_dir, "temp_vid.mp4")
+                out_mp3 = os.path.join(output_dir, f"{safe_title}.mp3")
+                req = urllib.request.Request(video_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=30) as resp, open(temp_vid, "wb") as f:
+                    shutil.copyfileobj(resp, f)
+                subprocess.run([
+                    "ffmpeg", "-y", "-threads", "1", "-i", temp_vid,
+                    "-vn", "-c:a", "libmp3lame", "-b:a", "192k",
+                    out_mp3
+                ], capture_output=True, timeout=30)
+                if os.path.exists(out_mp3) and os.path.getsize(out_mp3) > 0:
+                    return out_mp3, "mp3", f"{safe_title}.mp3", os.path.getsize(out_mp3)
+            raise RuntimeError("В этом пине нет аудиодорожки.")
+
+    # -------------------------------------------------------------
+    # YOUTUBE, TIKTOK, VK, DZEN PIPELINE (yt-dlp)
+    # -------------------------------------------------------------
+    ytdlp_base = get_ytdlp_cmd() + get_common_ytdlp_args(is_youtube=is_yt)
 
     # Case 1: Download PNG thumbnail or image
     if target_format == "PNG":
         out_png = os.path.join(output_dir, "output.png")
-
-        # Pinterest direct image
-        if "pinterest" in url or "pin.it" in url:
-            p_img, p_title = _get_pinterest_image_url(url)
-            if p_img:
-                try:
-                    req = urllib.request.Request(
-                        p_img,
-                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-                    )
-                    with urllib.request.urlopen(req, timeout=15) as resp:
-                        with Image.open(resp) as img:
-                            img.save(out_png, format="PNG")
-                    safe_title = re.sub(r'[\\/*?:"<>|]', '', p_title or "pinterest_image")[:40].strip() or "pinterest_image"
-                    return out_png, "png", f"{safe_title}.png", os.path.getsize(out_png)
-                except Exception as e:
-                    logger.warning(f"Failed to download direct Pinterest image: {e}")
 
         # yt-dlp thumbnail
         thumb_template = os.path.join(output_dir, "thumb.%(ext)s")
@@ -264,8 +341,8 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
     # Case 2: Download MP3 Audio
     elif target_format == "MP3":
         out_template = os.path.join(output_dir, "audio.%(ext)s")
-        cmd_audio = ytdlp_base + [
-            "-f", "ba/b/best",
+        format_arg = ["-f", "ba/b/best"] if is_yt else ["-f", "bestaudio/best"]
+        cmd_audio = ytdlp_base + format_arg + [
             "--extract-audio",
             "--audio-format", "mp3",
             "--audio-quality", "5",
@@ -276,7 +353,7 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
         res = subprocess.run(cmd_audio, capture_output=True, text=True, timeout=90)
 
         # Fallback if first attempt failed on YouTube
-        if res.returncode != 0 and ("youtube" in url or "youtu.be" in url):
+        if res.returncode != 0 and is_yt:
             cmd_fallback = get_ytdlp_cmd() + [
                 "--no-check-certificates",
                 "--geo-bypass",
@@ -300,11 +377,17 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
         error_msg = res.stderr.strip() if res.stderr else "Неизвестная ошибка"
         raise RuntimeError(f"Не удалось скачать аудио: {error_msg[-250:]}")
 
-    # Case 3: Download MP4 Video (constrained to 720p and max 45MB to protect RAM)
+    # Case 3: Download MP4 Video
     else:
         out_template = os.path.join(output_dir, "video.%(ext)s")
+        # Format selector: YouTube uses progressive 18/22/b, others use bestvideo+bestaudio/best
+        if is_yt:
+            format_spec = "18/22/b[height<=720]/best[height<=720][ext=mp4]/b/best"
+        else:
+            format_spec = "bestvideo[height<=720]+bestaudio/best[height<=720]/best/b"
+
         cmd_video = ytdlp_base + [
-            "-f", "18/22/b[height<=720]/best[height<=720][ext=mp4]/b/best",
+            "-f", format_spec,
             "--merge-output-format", "mp4",
             "--no-playlist",
             "-o", out_template,
@@ -312,22 +395,32 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
         ]
         res = subprocess.run(cmd_video, capture_output=True, text=True, timeout=120)
 
-        # Fallback if first attempt failed on YouTube
-        if res.returncode != 0 and ("youtube" in url or "youtu.be" in url):
-            cmd_fallback = get_ytdlp_cmd() + [
-                "--no-check-certificates",
-                "--geo-bypass",
-                "--extractor-args", "youtube:player_client=ios;player_skip=webpage,configs",
-                "-f", "b/best",
-                "--no-playlist",
-                "-o", out_template,
-                url
-            ]
+        # Fallback if first attempt failed
+        if res.returncode != 0:
+            if is_yt:
+                cmd_fallback = get_ytdlp_cmd() + [
+                    "--no-check-certificates",
+                    "--geo-bypass",
+                    "--extractor-args", "youtube:player_client=ios;player_skip=webpage,configs",
+                    "-f", "b/best",
+                    "--no-playlist",
+                    "-o", out_template,
+                    url
+                ]
+            else:
+                cmd_fallback = get_ytdlp_cmd() + [
+                    "--no-check-certificates",
+                    "--geo-bypass",
+                    "-f", "best/b",
+                    "--no-playlist",
+                    "-o", out_template,
+                    url
+                ]
             res = subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=120)
 
         raw_video_path = None
         for f in os.listdir(output_dir):
-            if f.endswith(".mp4") or f.endswith(".mkv") or f.endswith(".webm"):
+            if f.endswith(".mp4") or f.endswith(".mkv") or f.endswith(".webm") or f.endswith(".ts"):
                 raw_video_path = os.path.join(output_dir, f)
                 break
 
