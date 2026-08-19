@@ -37,9 +37,11 @@ from keyboards import (
     get_done_keyboard,
     get_format_keyboard,
     get_main_keyboard,
+    get_shazam_done_keyboard,
     get_url_done_keyboard,
     get_url_format_keyboard,
 )
+from tiktok_shazam import shazam_tiktok_url
 from url_converter import (
     DOWNLOAD_SEMAPHORE,
     detect_service,
@@ -81,6 +83,7 @@ class ConverterState(StatesGroup):
 
 class UrlConverterState(StatesGroup):
     waiting_for_url = State()
+    waiting_for_shazam_url = State()
     selecting_format = State()
 
 
@@ -209,6 +212,121 @@ async def start_url_converter_mode(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.message(Command("shazam"))
+@router.message(F.text == "Шазам (TikTok)")
+@router.message(F.text.lower() == "шазам (tiktok)")
+@router.message(F.text.lower() == "шазам")
+async def start_shazam_mode(message: Message, state: FSMContext) -> None:
+    await state.set_state(UrlConverterState.waiting_for_shazam_url)
+    await message.answer(
+        "Отправь ссылку на TikTok и я найду тебе музыку. (еще в тесте:3)",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+async def process_shazam_for_url(event: Message | CallbackQuery, url: str, state: FSMContext) -> None:
+    is_cb = isinstance(event, CallbackQuery)
+    target_msg = event.message if is_cb else event
+
+    if is_cb:
+        await event.answer("Распознаю музыку...")
+
+    if DOWNLOAD_SEMAPHORE.locked():
+        if target_msg:
+            txt = (
+                "Вы в очереди на обработку...\n"
+                "Очередь сделана в целях экономии ресурсов и сохранения сервиса бесплатным для вас!"
+            )
+            if is_cb:
+                await target_msg.edit_text(txt, parse_mode="Markdown")
+            else:
+                await target_msg.answer(txt, parse_mode="Markdown")
+
+    async with DOWNLOAD_SEMAPHORE:
+        status_txt = "Извлекаю аудио и распознаю музыку через Shazam...\nПожалуйста, подождите немного."
+        if is_cb and target_msg:
+            status_msg = target_msg
+            await target_msg.edit_text(status_txt, parse_mode="Markdown")
+        else:
+            status_msg = await target_msg.answer(status_txt, parse_mode="Markdown")
+
+        try:
+            track_info = await shazam_tiktok_url(url)
+            if not track_info:
+                not_found_txt = (
+                    "К сожалению, Shazam не смог определить трек в этом видео из TikTok "
+                    "(возможно, это оригинальный голос автора или сильный ремикс).\n\n"
+                    "Вы можете скачать аудиодорожку напрямую в формате MP3:"
+                )
+                await state.update_data(url=url, service="tiktok", service_name="TikTok")
+                await status_msg.edit_text(
+                    not_found_txt,
+                    reply_markup=get_shazam_done_keyboard(),
+                )
+                return
+
+            title = track_info.get("title", "Неизвестно")
+            artist = track_info.get("artist", "Неизвестно")
+            album = track_info.get("album")
+            genres = track_info.get("genres")
+            shazam_url = track_info.get("shazam_url")
+            apple_music_url = track_info.get("apple_music_url")
+            cover_url = track_info.get("cover_url")
+
+            lines = [
+                "Музыка из TikTok найдена!\n",
+                f"• Название: `{title}`",
+                f"• Исполнитель: `{artist}`",
+            ]
+            if album:
+                lines.append(f"• Альбом: `{album}`")
+            if genres:
+                lines.append(f"• Жанр: `{genres}`")
+
+            links = []
+            if shazam_url:
+                links.append(f"[Shazam]({shazam_url})")
+            if apple_music_url:
+                links.append(f"[Apple Music]({apple_music_url})")
+            if links:
+                lines.append("")
+                lines.append("" + " | ".join(links))
+
+            text_result = "\n".join(lines)
+            await state.update_data(url=url, service="tiktok", service_name="TikTok")
+
+            if cover_url:
+                try:
+                    await target_msg.answer_photo(
+                        photo=cover_url,
+                        caption=text_result,
+                        reply_markup=get_shazam_done_keyboard(),
+                        parse_mode="Markdown",
+                    )
+                    await status_msg.delete()
+                    return
+                except Exception:
+                    pass
+
+            await status_msg.edit_text(
+                text_result,
+                reply_markup=get_shazam_done_keyboard(),
+                parse_mode="Markdown",
+                disable_web_page_preview=False,
+            )
+
+        except Exception as exc:
+            logger.exception("Error during Shazam recognition")
+            await target_msg.answer(
+                f"Ошибка при распознавании трека: {exc}\n"
+                f"Попробуйте отправить ссылку заново или скачать в MP3.",
+                reply_markup=get_shazam_done_keyboard(),
+            )
+        finally:
+            gc.collect()
+
+
 @router.message(F.text.regexp(r'https?://[^\s<>"]+'))
 async def handle_url_message(message: Message, state: FSMContext) -> None:
     raw_text = message.text or ""
@@ -219,12 +337,17 @@ async def handle_url_message(message: Message, state: FSMContext) -> None:
     service_key, service_name = detect_service(url)
     if not service_key:
         current_st = await state.get_state()
-        if current_st == UrlConverterState.waiting_for_url:
+        if current_st in (UrlConverterState.waiting_for_url, UrlConverterState.waiting_for_shazam_url):
             await message.answer(
                 "Эта ссылка не принадлежит поддерживаемым сервисам.\n\n"
                 "Поддерживаются: YouTube, Pinterest, TikTok, VK, Яндекс Дзен.",
                 reply_markup=get_cancel_keyboard(),
             )
+        return
+
+    current_st = await state.get_state()
+    if current_st == UrlConverterState.waiting_for_shazam_url:
+        await process_shazam_for_url(message, url, state)
         return
 
     await state.set_state(UrlConverterState.selecting_format)
@@ -237,7 +360,7 @@ async def handle_url_message(message: Message, state: FSMContext) -> None:
     )
     await message.answer(
         caption,
-        reply_markup=get_url_format_keyboard(),
+        reply_markup=get_url_format_keyboard(service_key),
         parse_mode="Markdown",
     )
 
@@ -541,7 +664,7 @@ async def handle_url_conversion_callback(callback: CallbackQuery, state: FSMCont
         return
 
     target_format = action.upper()
-    if target_format not in ("MP4", "MP3", "PNG"):
+    if target_format not in ("MP4", "MP3", "PNG", "SHAZAM"):
         await callback.answer("Неизвестный формат", show_alert=True)
         return
 
@@ -551,6 +674,10 @@ async def handle_url_conversion_callback(callback: CallbackQuery, state: FSMCont
 
     if not url:
         await callback.answer("Ссылка не найдена или сессия устарела. Отправьте ссылку заново.", show_alert=True)
+        return
+
+    if target_format == "SHAZAM":
+        await process_shazam_for_url(callback, url, state)
         return
 
     await callback.answer(f"Запрос принят: {target_format}")
@@ -652,6 +779,18 @@ async def handle_url_conversion_callback(callback: CallbackQuery, state: FSMCont
                 )
         finally:
             gc.collect()
+
+
+@router.callback_query(F.data == "shazam:new_url")
+async def handle_shazam_new_url(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.set_state(UrlConverterState.waiting_for_shazam_url)
+    if callback.message:
+        await callback.message.answer(
+            "Отправь ссылку на TikTok и я найду тебе музыку. (еще в тесте:3)",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="Markdown",
+        )
 
 
 @router.callback_query(F.data.startswith("conv:"))

@@ -14,8 +14,9 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.button(text="Конвертер")
     builder.button(text="Конвертер (из ссылки)")
+    builder.button(text="Шазам (TikTok)")
     builder.button(text="Помощь")
-    builder.adjust(2, 1)
+    builder.adjust(2, 2)
     return builder.as_markup(resize_keyboard=True)
 
 
@@ -58,12 +59,13 @@ def get_done_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_url_format_keyboard() -> InlineKeyboardMarkup:
+def get_url_format_keyboard(service_key: str | None = None) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="🎬 MP4 (Видео)", callback_data="urlconv:MP4")
-    builder.button(text="🎵 MP3 (Аудио)", callback_data="urlconv:MP3")
-    builder.button(text="🖼 PNG (Фото/Превью)", callback_data="urlconv:PNG")
-    builder.adjust(1, 2)
+    builder.button(text="MP4 (Видео)", callback_data="urlconv:MP4")
+    builder.button(text="MP3 (Аудио)", callback_data="urlconv:MP3")
+    builder.button(text="PNG (Фото/Превью)", callback_data="urlconv:PNG")
+    builder.button(text="Найти трек (Шазам)", callback_data="urlconv:SHAZAM")
+    builder.adjust(1, 2, 1)
     builder.row(InlineKeyboardButton(text="Отмена", callback_data="urlconv:cancel"))
     return builder.as_markup()
 
@@ -74,10 +76,18 @@ def get_url_done_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_shazam_done_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Распознать другой TikTok", callback_data="shazam:new_url")
+    builder.button(text="Скачать MP3", callback_data="urlconv:MP3")
+    builder.adjust(1, 1)
+    return builder.as_markup()
+
+
 def get_broadcast_type_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="🎯 Выборочно", callback_data="broadcast:targeted")
-    builder.button(text="👥 Всем", callback_data="broadcast:all")
+    builder.button(text="Выборочно", callback_data="broadcast:targeted")
+    builder.button(text="Всем", callback_data="broadcast:all")
     builder.adjust(2)
     builder.row(InlineKeyboardButton(text="Отмена", callback_data="broadcast:cancel"))
     return builder.as_markup()
