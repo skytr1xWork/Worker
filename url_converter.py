@@ -1,3 +1,5 @@
+import asyncio
+import gc
 import io
 import json
 import logging
@@ -16,6 +18,9 @@ for p in ("/usr/lib/python3.14/site-packages", "/usr/lib/python3/dist-packages",
         sys.path.append(p)
 
 logger = logging.getLogger(__name__)
+
+# Global semaphore to limit downloads to exactly 1 process at a time (protects Render free tier 512MB RAM)
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(1)
 
 SUPPORTED_SERVICES = {
     "youtube": {
@@ -82,13 +87,17 @@ def get_ytdlp_cmd() -> list[str]:
 
 
 def get_common_ytdlp_args() -> list[str]:
-    """Returns extractor args and spoofing headers that bypass bot checks on cloud servers."""
+    """Returns low-memory extractor args and spoofing headers that bypass bot checks on cloud servers."""
     return [
         "--no-check-certificates",
         "--geo-bypass",
         "--extractor-args", "youtube:player_client=android;player_skip=webpage,configs",
         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "--no-warnings",
+        "--buffer-size", "16K",
+        "--http-chunk-size", "5M",
+        "--max-filesize", "48M",
+        "--concurrent-fragments", "1",
     ]
 
 
@@ -185,139 +194,151 @@ def get_url_metadata(url: str) -> dict:
     }
 
 
-def download_url_media(url: str, target_format: str) -> tuple[bytes, str, str]:
+def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple[str, str, str, int]:
     """
-    Downloads media from URL and converts it to target_format (MP4, MP3, PNG).
-    Returns (file_bytes, file_extension, filename_title).
+    Downloads media directly to disk with strict low-RAM memory limits.
+    Returns (final_file_path, file_extension, filename_title, file_size_bytes).
     """
     fmt = target_format.upper().strip()
     target_format = fmt
     ytdlp_base = get_ytdlp_cmd() + get_common_ytdlp_args()
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        # Case 1: Download PNG thumbnail or image
-        if target_format == "PNG":
-            # If Pinterest pin, try direct image extraction first
-            if "pinterest" in url or "pin.it" in url:
-                p_img, p_title = _get_pinterest_image_url(url)
-                if p_img:
-                    try:
-                        req = urllib.request.Request(
-                            p_img,
-                            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-                        )
-                        with urllib.request.urlopen(req, timeout=15) as resp:
-                            raw_img = resp.read()
-                        with Image.open(io.BytesIO(raw_img)) as img:
-                            out_io = io.BytesIO()
-                            img.save(out_io, format="PNG")
-                            safe_title = re.sub(r'[\\/*?:"<>|]', '', p_title or "pinterest_image")[:40].strip() or "pinterest_image"
-                            return out_io.getvalue(), "png", f"{safe_title}.png"
-                    except Exception as e:
-                        logger.warning(f"Failed to download direct Pinterest image: {e}")
+    # Case 1: Download PNG thumbnail or image
+    if target_format == "PNG":
+        out_png = os.path.join(output_dir, "output.png")
 
-            # 1. Try to download thumbnail via yt-dlp
-            thumb_template = os.path.join(tmp_dir, "thumb.%(ext)s")
-            cmd_thumb = ytdlp_base + [
-                "--write-thumbnail",
-                "--skip-download",
-                "--no-playlist",
-                "-o", thumb_template,
-                url
-            ]
-            subprocess.run(cmd_thumb, capture_output=True, timeout=25)
-            
-            thumb_files = [os.path.join(tmp_dir, f) for f in os.listdir(tmp_dir) if os.path.isfile(os.path.join(tmp_dir, f))]
-            if thumb_files:
-                img_path = thumb_files[0]
+        # Pinterest direct image
+        if "pinterest" in url or "pin.it" in url:
+            p_img, p_title = _get_pinterest_image_url(url)
+            if p_img:
                 try:
-                    with Image.open(img_path) as img:
-                        out_io = io.BytesIO()
-                        img.save(out_io, format="PNG")
-                        return out_io.getvalue(), "png", "image.png"
-                except Exception:
-                    pass
+                    req = urllib.request.Request(
+                        p_img,
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                    )
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        with Image.open(resp) as img:
+                            img.save(out_png, format="PNG")
+                    safe_title = re.sub(r'[\\/*?:"<>|]', '', p_title or "pinterest_image")[:40].strip() or "pinterest_image"
+                    return out_png, "png", f"{safe_title}.png", os.path.getsize(out_png)
+                except Exception as e:
+                    logger.warning(f"Failed to download direct Pinterest image: {e}")
 
-            # 2. Fallback: get metadata thumbnail URL and download directly
-            meta = get_url_metadata(url)
-            if meta.get("thumbnail"):
-                req = urllib.request.Request(
-                    meta["thumbnail"],
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-                )
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    raw_img = resp.read()
-                with Image.open(io.BytesIO(raw_img)) as img:
-                    out_io = io.BytesIO()
-                    img.save(out_io, format="PNG")
-                    safe_title = re.sub(r'[\\/*?:"<>|]', '', meta.get("title", "image"))[:40].strip() or "image"
-                    return out_io.getvalue(), "png", f"{safe_title}.png"
+        # yt-dlp thumbnail
+        thumb_template = os.path.join(output_dir, "thumb.%(ext)s")
+        cmd_thumb = ytdlp_base + [
+            "--write-thumbnail",
+            "--skip-download",
+            "--no-playlist",
+            "-o", thumb_template,
+            url
+        ]
+        subprocess.run(cmd_thumb, capture_output=True, timeout=25)
 
-            raise RuntimeError("Не удалось извлечь изображение по ссылке")
+        thumb_files = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isfile(os.path.join(output_dir, f)) and f.startswith("thumb")]
+        if thumb_files:
+            try:
+                with Image.open(thumb_files[0]) as img:
+                    img.save(out_png, format="PNG")
+                meta = get_url_metadata(url)
+                safe_title = re.sub(r'[\\/*?:"<>|]', '', meta.get("title", "image"))[:40].strip() or "image"
+                return out_png, "png", f"{safe_title}.png", os.path.getsize(out_png)
+            except Exception:
+                pass
 
-        # Case 2: Download MP3 Audio
-        elif target_format == "MP3":
-            out_template = os.path.join(tmp_dir, "audio.%(ext)s")
-            cmd_audio = ytdlp_base + [
-                "--extract-audio",
-                "--audio-format", "mp3",
-                "--audio-quality", "0",
-                "--no-playlist",
-                "-o", out_template,
-                url
-            ]
-            res = subprocess.run(cmd_audio, capture_output=True, text=True, timeout=90)
-            
-            # Find output mp3 file
-            for f in os.listdir(tmp_dir):
-                if f.endswith(".mp3"):
-                    full_p = os.path.join(tmp_dir, f)
-                    with open(full_p, "rb") as af:
-                        audio_b = af.read()
-                    meta = get_url_metadata(url)
-                    safe_title = re.sub(r'[\\/*?:"<>|]', '', meta.get("title", "audio"))[:40].strip() or "audio"
-                    return audio_b, "mp3", f"{safe_title}.mp3"
+        # Fallback from metadata thumbnail
+        meta = get_url_metadata(url)
+        if meta.get("thumbnail"):
+            req = urllib.request.Request(
+                meta["thumbnail"],
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                with Image.open(resp) as img:
+                    img.save(out_png, format="PNG")
+            safe_title = re.sub(r'[\\/*?:"<>|]', '', meta.get("title", "image"))[:40].strip() or "image"
+            return out_png, "png", f"{safe_title}.png", os.path.getsize(out_png)
 
+        raise RuntimeError("Не удалось извлечь изображение по ссылке")
+
+    # Case 2: Download MP3 Audio
+    elif target_format == "MP3":
+        out_template = os.path.join(output_dir, "audio.%(ext)s")
+        cmd_audio = ytdlp_base + [
+            "--extract-audio",
+            "--audio-format", "mp3",
+            "--audio-quality", "5",
+            "--no-playlist",
+            "-o", out_template,
+            url
+        ]
+        res = subprocess.run(cmd_audio, capture_output=True, text=True, timeout=90)
+
+        for f in os.listdir(output_dir):
+            if f.endswith(".mp3"):
+                full_p = os.path.join(output_dir, f)
+                meta = get_url_metadata(url)
+                safe_title = re.sub(r'[\\/*?:"<>|]', '', meta.get("title", "audio"))[:40].strip() or "audio"
+                return full_p, "mp3", f"{safe_title}.mp3", os.path.getsize(full_p)
+
+        error_msg = res.stderr.strip() if res.stderr else "Неизвестная ошибка"
+        raise RuntimeError(f"Не удалось скачать аудио: {error_msg[-250:]}")
+
+    # Case 3: Download MP4 Video (constrained to 720p and max 45MB to protect RAM)
+    else:
+        out_template = os.path.join(output_dir, "video.%(ext)s")
+        cmd_video = ytdlp_base + [
+            "-f", "bestvideo[height<=720][filesize<45M][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][filesize<45M]/best[height<=480]/best",
+            "--merge-output-format", "mp4",
+            "--no-playlist",
+            "-o", out_template,
+            url
+        ]
+        res = subprocess.run(cmd_video, capture_output=True, text=True, timeout=120)
+
+        raw_video_path = None
+        for f in os.listdir(output_dir):
+            if f.endswith(".mp4") or f.endswith(".mkv") or f.endswith(".webm"):
+                raw_video_path = os.path.join(output_dir, f)
+                break
+
+        if not raw_video_path:
             error_msg = res.stderr.strip() if res.stderr else "Неизвестная ошибка"
-            raise RuntimeError(f"Не удалось скачать аудио: {error_msg[-250:]}")
+            raise RuntimeError(f"Не удалось скачать видео: {error_msg[-250:]}")
 
-        # Case 3: Download MP4 Video
-        else:
-            out_template = os.path.join(tmp_dir, "video.%(ext)s")
-            cmd_video = ytdlp_base + [
-                "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-                "--merge-output-format", "mp4",
-                "--no-playlist",
-                "-o", out_template,
-                url
-            ]
-            res = subprocess.run(cmd_video, capture_output=True, text=True, timeout=120)
+        final_mp4 = os.path.join(output_dir, "final.mp4")
 
-            # Find output mp4 or video file
-            mp4_path = None
-            for f in os.listdir(tmp_dir):
-                if f.endswith(".mp4") or f.endswith(".mkv") or f.endswith(".webm"):
-                    mp4_path = os.path.join(tmp_dir, f)
-                    break
+        # Low-RAM MP4 faststart / transcode:
+        # 1. First try stream copy with faststart (takes 0 CPU, < 5MB RAM)
+        cp_res = subprocess.run([
+            "ffmpeg", "-y", "-i", raw_video_path,
+            "-c", "copy",
+            "-movflags", "+faststart",
+            final_mp4
+        ], capture_output=True, timeout=30)
 
-            if not mp4_path:
-                error_msg = res.stderr.strip() if res.stderr else "Неизвестная ошибка"
-                raise RuntimeError(f"Не удалось скачать видео: {error_msg[-250:]}")
-
-            # Transcode with faststart if needed
-            final_mp4 = os.path.join(tmp_dir, "final.mp4")
+        # 2. If stream copy failed (e.g. non-mp4 codec), do lightweight transcode with 1 thread
+        if cp_res.returncode != 0 or not os.path.exists(final_mp4) or os.path.getsize(final_mp4) == 0:
             subprocess.run([
-                "ffmpeg", "-y", "-i", mp4_path,
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast",
+                "ffmpeg", "-y", "-i", raw_video_path,
+                "-threads", "1",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
+                "-vf", "scale='min(1280,iw)':-2",
                 "-c:a", "aac", "-b:a", "128k",
                 "-movflags", "+faststart",
                 final_mp4
             ], capture_output=True, timeout=120)
 
-            result_path = final_mp4 if os.path.exists(final_mp4) else mp4_path
-            with open(result_path, "rb") as vf:
-                video_b = vf.read()
+        result_path = final_mp4 if (os.path.exists(final_mp4) and os.path.getsize(final_mp4) > 0) else raw_video_path
+        meta = get_url_metadata(url)
+        safe_title = re.sub(r'[\\/*?:"<>|]', '', meta.get("title", "video"))[:40].strip() or "video"
+        return result_path, "mp4", f"{safe_title}.mp4", os.path.getsize(result_path)
 
-            meta = get_url_metadata(url)
-            safe_title = re.sub(r'[\\/*?:"<>|]', '', meta.get("title", "video"))[:40].strip() or "video"
-            return video_b, "mp4", f"{safe_title}.mp4"
+
+def download_url_media(url: str, target_format: str) -> tuple[bytes, str, str]:
+    """Compatibility wrapper that reads bytes (used if needed)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path, ext, title, _ = download_url_to_file(url, target_format, tmp_dir)
+        with open(path, "rb") as f:
+            data = f.read()
+        return data, ext, title

@@ -1,13 +1,15 @@
 import asyncio
+import gc
 import io
 import logging
 import os
+import tempfile
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, Message
 
 from converter import (
     AUDIO_EXTENSIONS,
@@ -35,8 +37,9 @@ from keyboards import (
     get_url_format_keyboard,
 )
 from url_converter import (
+    DOWNLOAD_SEMAPHORE,
     detect_service,
-    download_url_media,
+    download_url_to_file,
     extract_first_url,
 )
 
@@ -516,90 +519,105 @@ async def handle_url_conversion_callback(callback: CallbackQuery, state: FSMCont
         await callback.answer("Ссылка не найдена или сессия устарела. Отправьте ссылку заново.", show_alert=True)
         return
 
-    await callback.answer(f"Скачиваю и конвертирую в {target_format}...")
+    await callback.answer(f"Запрос принят: {target_format}")
 
-    if callback.message:
-        await callback.message.edit_text(
-            f"⏳ Скачиваю и конвертирую из **{service_name}** в `{target_format}`...\n"
-            f"Пожалуйста, подождите немного.",
-            parse_mode="Markdown",
-        )
+    # If another download process is already running, notify about the queue
+    if DOWNLOAD_SEMAPHORE.locked():
+        if callback.message:
+            await callback.message.edit_text(
+                f"⏳ Вы в очереди на скачивание (1 процесс одновременно для экономии памяти сервера)...\n"
+                f"Пожалуйста, подождите, ваш запрос выполнится следующим.",
+                parse_mode="Markdown",
+            )
 
-    try:
-        file_bytes, ext, filename = await asyncio.to_thread(download_url_media, url, target_format)
+    async with DOWNLOAD_SEMAPHORE:
+        if callback.message:
+            await callback.message.edit_text(
+                f"⏳ Скачиваю и конвертирую из **{service_name}** в `{target_format}`...\n"
+                f"Пожалуйста, подождите немного.",
+                parse_mode="Markdown",
+            )
 
-        if len(file_bytes) > 50 * 1024 * 1024:
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                file_path, ext, filename, file_size = await asyncio.to_thread(
+                    download_url_to_file, url, target_format, temp_dir
+                )
+
+                if file_size > 50 * 1024 * 1024:
+                    if callback.message:
+                        await callback.message.answer(
+                            "Файл получился больше 50 МБ (лимит Telegram на отправку ботом).\n"
+                            "Попробуйте выбрать другой формат (например, MP3 или PNG).",
+                            reply_markup=get_main_keyboard(),
+                        )
+                    return
+
+                output_file = FSInputFile(file_path, filename=filename)
+                caption = (
+                    f"Готово! Конвертация ссылки завершена\n\n"
+                    f"Сервис: **{service_name}**\n"
+                    f"Формат: `{target_format}`\n"
+                    f"Размер: {format_size(file_size)}"
+                )
+
+                if callback.message:
+                    if target_format == "MP4":
+                        try:
+                            await callback.message.answer_video(
+                                video=output_file,
+                                caption=caption,
+                                reply_markup=get_url_done_keyboard(),
+                                parse_mode="Markdown",
+                            )
+                        except Exception:
+                            await callback.message.answer_document(
+                                document=output_file,
+                                caption=caption,
+                                reply_markup=get_url_done_keyboard(),
+                                parse_mode="Markdown",
+                            )
+                    elif target_format == "MP3":
+                        try:
+                            await callback.message.answer_audio(
+                                audio=output_file,
+                                caption=caption,
+                                reply_markup=get_url_done_keyboard(),
+                                parse_mode="Markdown",
+                            )
+                        except Exception:
+                            await callback.message.answer_document(
+                                document=output_file,
+                                caption=caption,
+                                reply_markup=get_url_done_keyboard(),
+                                parse_mode="Markdown",
+                            )
+                    elif target_format == "PNG":
+                        try:
+                            await callback.message.answer_photo(
+                                photo=output_file,
+                                caption=caption,
+                                reply_markup=get_url_done_keyboard(),
+                                parse_mode="Markdown",
+                            )
+                        except Exception:
+                            await callback.message.answer_document(
+                                document=output_file,
+                                caption=caption,
+                                reply_markup=get_url_done_keyboard(),
+                                parse_mode="Markdown",
+                            )
+
+        except Exception as exc:
+            logger.exception("Error during URL conversion")
             if callback.message:
                 await callback.message.answer(
-                    "Файл получился больше 50 МБ (лимит Telegram на отправку ботом).\n"
-                    "Попробуйте выбрать другой формат (например, MP3 или PNG).",
+                    f"Ошибка при обработке ссылки: {exc}\n"
+                    f"Проверьте доступность ссылки или попробуйте другой формат.",
                     reply_markup=get_main_keyboard(),
                 )
-            return
-
-        output_file = BufferedInputFile(file_bytes, filename=filename)
-        caption = (
-            f"Готово! Конвертация ссылки завершена\n\n"
-            f"Сервис: **{service_name}**\n"
-            f"Формат: `{target_format}`\n"
-            f"Размер: {format_size(len(file_bytes))}"
-        )
-
-        if callback.message:
-            if target_format == "MP4":
-                try:
-                    await callback.message.answer_video(
-                        video=output_file,
-                        caption=caption,
-                        reply_markup=get_url_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-                except Exception:
-                    await callback.message.answer_document(
-                        document=output_file,
-                        caption=caption,
-                        reply_markup=get_url_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-            elif target_format == "MP3":
-                try:
-                    await callback.message.answer_audio(
-                        audio=output_file,
-                        caption=caption,
-                        reply_markup=get_url_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-                except Exception:
-                    await callback.message.answer_document(
-                        document=output_file,
-                        caption=caption,
-                        reply_markup=get_url_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-            elif target_format == "PNG":
-                try:
-                    await callback.message.answer_photo(
-                        photo=output_file,
-                        caption=caption,
-                        reply_markup=get_url_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-                except Exception:
-                    await callback.message.answer_document(
-                        document=output_file,
-                        caption=caption,
-                        reply_markup=get_url_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-
-    except Exception as exc:
-        logger.exception("Error during URL conversion")
-        if callback.message:
-            await callback.message.answer(
-                f"Ошибка при обработке ссылки: {exc}\n"
-                f"Проверьте доступность ссылки или попробуйте другой формат.",
-                reply_markup=get_main_keyboard(),
-            )
+        finally:
+            gc.collect()
 
 
 @router.callback_query(F.data.startswith("conv:"))

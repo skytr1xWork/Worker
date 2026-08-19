@@ -377,13 +377,13 @@ def convert_video(input_bytes: bytes, source_format: str, target_format: str, or
         dst_path = dst_f.name
 
     try:
-        cmd = ["ffmpeg", "-y", "-i", src_path]
+        cmd = ["ffmpeg", "-y", "-threads", "1", "-i", src_path]
         if target == "MP4":
-            cmd.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"])
+            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"])
         elif target == "MKV":
-            cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-b:a", "128k"])
+            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-b:a", "128k"])
         elif target == "MOV":
-            cmd.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k"])
+            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k"])
         elif target == "AVI":
             cmd.extend(["-c:v", "mpeg4", "-q:v", "4", "-c:a", "libmp3lame", "-b:a", "128k"])
         elif target == "WEBM":
@@ -456,7 +456,7 @@ def convert_audio(input_bytes: bytes, source_format: str, target_format: str, or
         dst_path = dst_f.name
 
     try:
-        cmd = ["ffmpeg", "-y", "-i", src_path, "-vn"]
+        cmd = ["ffmpeg", "-y", "-threads", "1", "-i", src_path, "-vn"]
         if target == "MP3":
             cmd.extend(["-c:a", "libmp3lame", "-b:a", "192k", "-ar", "44100", "-ac", "2"])
         elif target == "OPUS":
