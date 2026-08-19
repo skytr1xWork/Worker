@@ -37,10 +37,12 @@ from keyboards import (
     get_done_keyboard,
     get_format_keyboard,
     get_main_keyboard,
+    get_qr_done_keyboard,
     get_shazam_done_keyboard,
     get_url_done_keyboard,
     get_url_format_keyboard,
 )
+from qr_service import generate_qr_image, read_qr_from_image
 from tiktok_shazam import shazam_tiktok_url
 from url_converter import (
     DOWNLOAD_SEMAPHORE,
@@ -85,6 +87,10 @@ class UrlConverterState(StatesGroup):
     waiting_for_url = State()
     waiting_for_shazam_url = State()
     selecting_format = State()
+
+
+class QRState(StatesGroup):
+    waiting_for_input = State()
 
 
 class BroadcastState(StatesGroup):
@@ -210,6 +216,102 @@ async def start_url_converter_mode(message: Message, state: FSMContext) -> None:
         reply_markup=get_cancel_keyboard(),
         parse_mode="Markdown",
     )
+
+
+@router.message(Command("qr"))
+@router.message(F.text == "Управление QR")
+@router.message(F.text.lower() == "управление qr")
+async def start_qr_mode(message: Message, state: FSMContext) -> None:
+    await state.set_state(QRState.waiting_for_input)
+    prompt_text = (
+        "Отправьте ссылку или текст для создания QR-кода, "
+        "либо отправьте изображение с QR-кодом для его чтения."
+    )
+    await message.answer(
+        prompt_text,
+        reply_markup=get_cancel_keyboard(),
+    )
+
+
+@router.message(QRState.waiting_for_input, F.photo)
+async def handle_qr_photo(message: Message, state: FSMContext, bot: Bot) -> None:
+    if not message.photo:
+        return
+
+    photo = message.photo[-1]
+    buf = io.BytesIO()
+    await bot.download(photo.file_id, destination=buf)
+    buf.seek(0)
+
+    results = read_qr_from_image(buf)
+    if not results:
+        await message.answer(
+            "Не удалось обнаружить QR-код на изображении. Убедитесь, что QR-код четкий и не обрезан.",
+            reply_markup=get_qr_done_keyboard(),
+        )
+        return
+
+    decoded_content = "\n\n".join(results)
+    await message.answer(
+        f"Содержимое QR-кода:\n\n{decoded_content}",
+        reply_markup=get_qr_done_keyboard(),
+        disable_web_page_preview=False,
+    )
+
+
+@router.message(QRState.waiting_for_input, F.document)
+async def handle_qr_document(message: Message, state: FSMContext, bot: Bot) -> None:
+    doc = message.document
+    if not doc:
+        return
+
+    buf = io.BytesIO()
+    await bot.download(doc.file_id, destination=buf)
+    buf.seek(0)
+
+    results = read_qr_from_image(buf)
+    if not results:
+        await message.answer(
+            "Не удалось обнаружить QR-код на изображении. Убедитесь, что QR-код четкий и не обрезан.",
+            reply_markup=get_qr_done_keyboard(),
+        )
+        return
+
+    decoded_content = "\n\n".join(results)
+    await message.answer(
+        f"Содержимое QR-кода:\n\n{decoded_content}",
+        reply_markup=get_qr_done_keyboard(),
+        disable_web_page_preview=False,
+    )
+
+
+@router.message(QRState.waiting_for_input, F.text)
+async def handle_qr_text(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    if text.lower() in ("отмена", "/cancel"):
+        await state.clear()
+        await message.answer("Действие отменено.", reply_markup=get_main_keyboard())
+        return
+
+    qr_buf = generate_qr_image(text)
+    qr_file = BufferedInputFile(qr_buf.getvalue(), filename="qr_code.png")
+    await message.answer_photo(
+        photo=qr_file,
+        caption=f"QR-код для содержимого:\n{text}",
+        reply_markup=get_qr_done_keyboard(),
+    )
+
+
+@router.callback_query(F.data.in_({"qr:new_create", "qr:new_read"}))
+async def handle_qr_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.set_state(QRState.waiting_for_input)
+    if callback.message:
+        await callback.message.answer(
+            "Отправьте ссылку или текст для создания QR-кода, "
+            "либо отправьте изображение с QR-кодом для его чтения.",
+            reply_markup=get_cancel_keyboard(),
+        )
 
 
 @router.message(Command("shazam"))

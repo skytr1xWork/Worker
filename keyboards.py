@@ -14,9 +14,10 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.button(text="Конвертер")
     builder.button(text="Конвертер (из ссылки)")
+    builder.button(text="Управление QR")
     builder.button(text="Шазам (TikTok)")
     builder.button(text="Помощь")
-    builder.adjust(2, 2)
+    builder.adjust(2, 2, 1)
     return builder.as_markup(resize_keyboard=True)
 
 
@@ -81,6 +82,14 @@ def get_shazam_done_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="Распознать другой TikTok", callback_data="shazam:new_url")
     builder.button(text="Скачать MP3", callback_data="urlconv:MP3")
     builder.adjust(1, 1)
+    return builder.as_markup()
+
+
+def get_qr_done_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Создать еще QR", callback_data="qr:new_create")
+    builder.button(text="Прочитать еще QR", callback_data="qr:new_read")
+    builder.adjust(2)
     return builder.as_markup()
 
 
