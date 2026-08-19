@@ -3,6 +3,7 @@ import gc
 import io
 import logging
 import os
+import re
 import tempfile
 
 from aiogram import Bot, F, Router
@@ -11,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, Message
 
+import db
 from converter import (
     AUDIO_EXTENSIONS,
     AUDIO_MIME_TYPES,
@@ -46,6 +48,28 @@ from url_converter import (
 logger = logging.getLogger(__name__)
 
 router = Router(name="main_router")
+
+
+@router.message.outer_middleware()
+async def track_user_middleware(handler, event: Message, data):
+    """Automatically records every active bot user to the database."""
+    if isinstance(event, Message) and event.from_user and not event.from_user.is_bot:
+        db.add_user(
+            user_id=event.from_user.id,
+            username=event.from_user.username,
+            first_name=event.from_user.first_name,
+        )
+    return await handler(event, data)
+
+
+def get_admin_ids() -> set[int]:
+    """Returns set of admin user IDs defined in environment variables (ADMIN_ID / ADMIN_IDS / OWNER_ID)."""
+    raw = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or os.getenv("OWNER_ID") or ""
+    ids = set()
+    for chunk in re.split(r'[,\s;]+', raw.strip()):
+        if chunk.isdigit() or (chunk.startswith("-") and chunk[1:].isdigit()):
+            ids.add(int(chunk))
+    return ids
 
 
 class ConverterState(StatesGroup):
@@ -800,4 +824,98 @@ async def handle_unexpected_url_input(message: Message) -> None:
     await message.answer(
         "Отправьте ссылку на видео, фото или аудио (YouTube, Pinterest, TikTok, VK, Яндекс Дзен).",
         reply_markup=get_cancel_keyboard(),
+    )
+
+
+# ==========================================
+# Admin Broadcast (/sl) Handler
+# ==========================================
+
+@router.message(Command("sl"))
+async def cmd_broadcast(message: Message, bot: Bot) -> None:
+    """
+    Broadcasts a message to all bot users.
+    Only available to users with IDs specified in ADMIN_ID / ADMIN_IDS / OWNER_ID env variables.
+    """
+    if not message.from_user:
+        return
+
+    admin_ids = get_admin_ids()
+    if not admin_ids or message.from_user.id not in admin_ids:
+        # Non-admin: silently ignore to keep command hidden
+        return
+
+    raw_text = message.text or ""
+    broadcast_text = re.sub(r"^/sl(?:@\w+)?\s*", "", raw_text, flags=re.IGNORECASE).strip()
+    is_reply = bool(message.reply_to_message)
+
+    if not broadcast_text and not is_reply:
+        await message.answer(
+            "❌ **Формат команды рассылки:**\n\n"
+            "• `/sl <текст сообщения>` — отправить текст всем пользователям бота\n"
+            "• Ответить командой `/sl` на любое сообщение (текст/фото/видео/документ)\n\n"
+            f"👥 Пользователей в базе: **{db.get_users_count()}**",
+            parse_mode="Markdown",
+        )
+        return
+
+    user_ids = db.get_all_user_ids()
+    if not user_ids:
+        # If database is empty, include current user
+        user_ids = [message.from_user.id]
+
+    total_users = len(user_ids)
+    status_msg = await message.answer(
+        f"⏳ **Начинаю рассылку...**\n"
+        f"👥 Получателей: {total_users}\n"
+        f"Пожалуйста, подождите завершения отправки.",
+        parse_mode="Markdown",
+    )
+
+    success_count = 0
+    failed_count = 0
+    blocked_count = 0
+
+    for idx, uid in enumerate(user_ids, 1):
+        try:
+            if is_reply and message.reply_to_message:
+                await bot.copy_message(
+                    chat_id=uid,
+                    from_chat_id=message.chat.id,
+                    message_id=message.reply_to_message.message_id,
+                )
+            else:
+                await bot.send_message(
+                    chat_id=uid,
+                    text=broadcast_text,
+                    disable_web_page_preview=False,
+                )
+            success_count += 1
+        except Exception as exc:
+            failed_count += 1
+            err_str = str(exc).lower()
+            if any(k in err_str for k in ("forbidden", "blocked", "deactivated", "chat not found", "user is deactivated")):
+                blocked_count += 1
+
+        # Rate limit: 25 messages per second to strictly follow Telegram limits
+        await asyncio.sleep(0.04)
+
+        if total_users > 20 and (idx % 25 == 0 or idx == total_users):
+            try:
+                await status_msg.edit_text(
+                    f"⏳ **Рассылка в процессе...** ({idx}/{total_users})\n"
+                    f"✅ Доставлено: {success_count}\n"
+                    f"❌ Ошибок / заблокировано: {failed_count}",
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+
+    await message.answer(
+        f"📢 **Рассылка успешно завершена!**\n\n"
+        f"👥 Всего пользователей: **{total_users}**\n"
+        f"✅ Успешно доставлено: **{success_count}**\n"
+        f"🚫 Заблокировали бота: **{blocked_count}**\n"
+        f"❌ Прочие ошибки: **{failed_count - blocked_count}**",
+        parse_mode="Markdown",
     )

@@ -3,6 +3,7 @@ import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+import db
 from handlers import router as main_router
 
 TOKEN = os.getenv("BOT_TOKEN", "")
@@ -12,6 +13,7 @@ def main() -> None:
     if not TOKEN:
         raise ValueError("BOT_TOKEN не найден. Укажите переменную окружения BOT_TOKEN перед запуском бота.")
 
+    db.init_db()
     bot = Bot(token=TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(main_router)
@@ -22,4 +24,3 @@ def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     main()
-
