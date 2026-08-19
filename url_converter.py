@@ -265,6 +265,7 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
     elif target_format == "MP3":
         out_template = os.path.join(output_dir, "audio.%(ext)s")
         cmd_audio = ytdlp_base + [
+            "-f", "ba/b/best",
             "--extract-audio",
             "--audio-format", "mp3",
             "--audio-quality", "5",
@@ -273,6 +274,21 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
             url
         ]
         res = subprocess.run(cmd_audio, capture_output=True, text=True, timeout=90)
+
+        # Fallback if first attempt failed on YouTube
+        if res.returncode != 0 and ("youtube" in url or "youtu.be" in url):
+            cmd_fallback = get_ytdlp_cmd() + [
+                "--no-check-certificates",
+                "--geo-bypass",
+                "--extractor-args", "youtube:player_client=ios;player_skip=webpage,configs",
+                "-f", "ba/b/best",
+                "--extract-audio",
+                "--audio-format", "mp3",
+                "--no-playlist",
+                "-o", out_template,
+                url
+            ]
+            res = subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=90)
 
         for f in os.listdir(output_dir):
             if f.endswith(".mp3"):
@@ -288,13 +304,26 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
     else:
         out_template = os.path.join(output_dir, "video.%(ext)s")
         cmd_video = ytdlp_base + [
-            "-f", "bestvideo[height<=720][filesize<45M][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][filesize<45M]/best[height<=480]/best",
+            "-f", "18/22/b[height<=720]/best[height<=720][ext=mp4]/b/best",
             "--merge-output-format", "mp4",
             "--no-playlist",
             "-o", out_template,
             url
         ]
         res = subprocess.run(cmd_video, capture_output=True, text=True, timeout=120)
+
+        # Fallback if first attempt failed on YouTube
+        if res.returncode != 0 and ("youtube" in url or "youtu.be" in url):
+            cmd_fallback = get_ytdlp_cmd() + [
+                "--no-check-certificates",
+                "--geo-bypass",
+                "--extractor-args", "youtube:player_client=ios;player_skip=webpage,configs",
+                "-f", "b/best",
+                "--no-playlist",
+                "-o", out_template,
+                url
+            ]
+            res = subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=120)
 
         raw_video_path = None
         for f in os.listdir(output_dir):

@@ -525,15 +525,15 @@ async def handle_url_conversion_callback(callback: CallbackQuery, state: FSMCont
     if DOWNLOAD_SEMAPHORE.locked():
         if callback.message:
             await callback.message.edit_text(
-                f"⏳ Вы в очереди на скачивание (1 процесс одновременно для экономии памяти сервера)...\n"
-                f"Пожалуйста, подождите, ваш запрос выполнится следующим.",
+                f"Вы в очереди на скачивание...\n"
+                f"Очередь сделана в целях экономии ресурсов и сохранения сервиса бесплатным для вас!",
                 parse_mode="Markdown",
             )
 
     async with DOWNLOAD_SEMAPHORE:
         if callback.message:
             await callback.message.edit_text(
-                f"⏳ Скачиваю и конвертирую из **{service_name}** в `{target_format}`...\n"
+                f"Скачиваю и конвертирую из **{service_name}** в `{target_format}`...\n"
                 f"Пожалуйста, подождите немного.",
                 parse_mode="Markdown",
             )
