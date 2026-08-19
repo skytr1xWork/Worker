@@ -64,7 +64,10 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     welcome_text = (
         "Здарова, щегол (я любя). Я хелпер бот для (и от) skytr1x.\n"
         "Я создан для помощи в быту и для навигации в самой экосистеме skytr1x лол.\n"
-        "Внизу будут кнопки с моими умениями вдруг чего"
+        "Для начала хочу уточнить пару деталей на будущее:\n\n"
+        "Бот полностью бесплатный, но это компенсируется достаточно маленькой скоростью загрузки файлов, лимитом на файлы (20 мб на ввод и 50 мб на вывод) и присутствием очереди на скачивание по ссылке.\n\n"
+        "Возможно когда-то будет возможность расширения материального функционала бота, но уж точно не в ближайшее время.\n"
+        "Я стараюсь делать бота максимально быстрым и удобным в пределах возможностей."
     )
     await message.answer(
         welcome_text,
@@ -683,7 +686,6 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
         await bot.download_file(file_info.file_path, destination=file_stream)
         input_bytes = file_stream.getvalue()
 
-        # Convert based on category and target
         if category == "video" or target_format in SUPPORTED_VIDEO_FORMATS:
             output_bytes, ext = convert_video(input_bytes, source_format, target_format, orig_filename=orig_filename)
         elif category == "audio" or target_format in SUPPORTED_AUDIO_FORMATS:
