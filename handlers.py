@@ -31,6 +31,8 @@ from converter import (
     normalize_format,
 )
 from keyboards import (
+    get_broadcast_cancel_keyboard,
+    get_broadcast_type_keyboard,
     get_cancel_keyboard,
     get_done_keyboard,
     get_format_keyboard,
@@ -80,6 +82,11 @@ class ConverterState(StatesGroup):
 class UrlConverterState(StatesGroup):
     waiting_for_url = State()
     selecting_format = State()
+
+
+class BroadcastState(StatesGroup):
+    waiting_for_recipients = State()
+    waiting_for_message = State()
 
 
 @router.message(CommandStart())
@@ -828,41 +835,135 @@ async def handle_unexpected_url_input(message: Message) -> None:
 
 
 # ==========================================
-# Admin Broadcast (/sl) Handler
+# Admin Broadcast (/sl) System
 # ==========================================
 
 @router.message(Command("sl"))
-async def cmd_broadcast(message: Message, bot: Bot) -> None:
+@router.message(F.text.lower() == "sl")
+async def cmd_broadcast_start(message: Message, state: FSMContext) -> None:
     """
-    Broadcasts a message to all bot users.
-    Only available to users with IDs specified in ADMIN_ID / ADMIN_IDS / OWNER_ID env variables.
+    Starts the broadcast wizard for authorized admins.
+    Shows buttons 'Выборочно' and 'Всем'.
     """
     if not message.from_user:
         return
 
     admin_ids = get_admin_ids()
     if not admin_ids or message.from_user.id not in admin_ids:
-        # Non-admin: silently ignore to keep command hidden
+        # Non-admin: silently ignore
         return
 
-    raw_text = message.text or ""
-    broadcast_text = re.sub(r"^/sl(?:@\w+)?\s*", "", raw_text, flags=re.IGNORECASE).strip()
-    is_reply = bool(message.reply_to_message)
+    await state.clear()
+    total_users = db.get_users_count()
+    await message.answer(
+        f"📢 **Панель рассылки сообщений**\n\n"
+        f"👥 Зарегистрировано пользователей в базе: **{total_users}**\n\n"
+        f"Выберите тип рассылки:",
+        reply_markup=get_broadcast_type_keyboard(),
+        parse_mode="Markdown",
+    )
 
-    if not broadcast_text and not is_reply:
+
+@router.callback_query(F.data.startswith("broadcast:"))
+async def handle_broadcast_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    admin_ids = get_admin_ids()
+    if not callback.from_user or callback.from_user.id not in admin_ids:
+        await callback.answer("У вас нет доступа", show_alert=True)
+        return
+
+    action = callback.data.split(":", 1)[1]
+
+    if action == "cancel":
+        await callback.answer("Рассылка отменена")
+        await state.clear()
+        if callback.message:
+            await callback.message.edit_text("Рассылка отменена.")
+        return
+
+    if action == "all":
+        await callback.answer()
+        await state.set_state(BroadcastState.waiting_for_message)
+        await state.update_data(target_mode="all")
+        if callback.message:
+            await callback.message.edit_text(
+                "Напиши сообщение для рассылки",
+                reply_markup=get_broadcast_cancel_keyboard(),
+            )
+        return
+
+    if action == "targeted":
+        await callback.answer()
+        await state.set_state(BroadcastState.waiting_for_recipients)
+        await state.update_data(target_mode="targeted")
+        if callback.message:
+            await callback.message.edit_text(
+                "Сначала укажи ID в формате 1111111, 1111111, 1111111",
+                reply_markup=get_broadcast_cancel_keyboard(),
+            )
+        return
+
+
+@router.message(BroadcastState.waiting_for_recipients)
+async def handle_broadcast_recipients_input(message: Message, state: FSMContext) -> None:
+    admin_ids = get_admin_ids()
+    if not message.from_user or message.from_user.id not in admin_ids:
+        return
+
+    if message.text and message.text.strip().lower() in ("/cancel", "отмена"):
+        await state.clear()
+        await message.answer("Рассылка отменена.", reply_markup=get_main_keyboard())
+        return
+
+    raw_input = message.text or ""
+    valid_ids, not_found = db.resolve_recipients(raw_input)
+
+    if not valid_ids:
+        not_found_str = f" (не найдены: {', '.join(not_found)})" if not_found else ""
         await message.answer(
-            "❌ **Формат команды рассылки:**\n\n"
-            "• `/sl <текст сообщения>` — отправить текст всем пользователям бота\n"
-            "• Ответить командой `/sl` на любое сообщение (текст/фото/видео/документ)\n\n"
-            f"👥 Пользователей в базе: **{db.get_users_count()}**",
-            parse_mode="Markdown",
+            f"❌ Не удалось найти указанных пользователей{not_found_str}.\n"
+            f"Укажи ID в формате 1111111, 1111111, 1111111 (или юзернеймы: @username1, @username2):",
+            reply_markup=get_broadcast_cancel_keyboard(),
         )
         return
 
-    user_ids = db.get_all_user_ids()
+    await state.update_data(recipients=valid_ids)
+    await state.set_state(BroadcastState.waiting_for_message)
+
+    info_note = ""
+    if not_found:
+        info_note = f"\n⚠️ Не найдены в базе бота: {', '.join(not_found)}"
+
+    await message.answer(
+        f"✅ Найдено получателей: **{len(valid_ids)}**{info_note}\n\n"
+        f"Напиши сообщение для рассылки",
+        reply_markup=get_broadcast_cancel_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+@router.message(BroadcastState.waiting_for_message)
+async def handle_broadcast_message_input(message: Message, state: FSMContext, bot: Bot) -> None:
+    admin_ids = get_admin_ids()
+    if not message.from_user or message.from_user.id not in admin_ids:
+        return
+
+    if message.text and message.text.strip().lower() in ("/cancel", "отмена"):
+        await state.clear()
+        await message.answer("Рассылка отменена.", reply_markup=get_main_keyboard())
+        return
+
+    data = await state.get_data()
+    target_mode = data.get("target_mode", "all")
+
+    if target_mode == "targeted":
+        user_ids = data.get("recipients", [])
+    else:
+        user_ids = db.get_all_user_ids()
+
     if not user_ids:
-        # If database is empty, include current user
         user_ids = [message.from_user.id]
+
+    await state.clear()
 
     total_users = len(user_ids)
     status_msg = await message.answer(
@@ -878,18 +979,12 @@ async def cmd_broadcast(message: Message, bot: Bot) -> None:
 
     for idx, uid in enumerate(user_ids, 1):
         try:
-            if is_reply and message.reply_to_message:
-                await bot.copy_message(
-                    chat_id=uid,
-                    from_chat_id=message.chat.id,
-                    message_id=message.reply_to_message.message_id,
-                )
-            else:
-                await bot.send_message(
-                    chat_id=uid,
-                    text=broadcast_text,
-                    disable_web_page_preview=False,
-                )
+            # Copy message preserves everything: text, photo, video, caption, entities, audio, etc.
+            await bot.copy_message(
+                chat_id=uid,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id,
+            )
             success_count += 1
         except Exception as exc:
             failed_count += 1
@@ -897,7 +992,7 @@ async def cmd_broadcast(message: Message, bot: Bot) -> None:
             if any(k in err_str for k in ("forbidden", "blocked", "deactivated", "chat not found", "user is deactivated")):
                 blocked_count += 1
 
-        # Rate limit: 25 messages per second to strictly follow Telegram limits
+        # Rate limit: 25 messages per second
         await asyncio.sleep(0.04)
 
         if total_users > 20 and (idx % 25 == 0 or idx == total_users):
@@ -913,9 +1008,10 @@ async def cmd_broadcast(message: Message, bot: Bot) -> None:
 
     await message.answer(
         f"📢 **Рассылка успешно завершена!**\n\n"
-        f"👥 Всего пользователей: **{total_users}**\n"
+        f"👥 Всего получателей: **{total_users}**\n"
         f"✅ Успешно доставлено: **{success_count}**\n"
         f"🚫 Заблокировали бота: **{blocked_count}**\n"
         f"❌ Прочие ошибки: **{failed_count - blocked_count}**",
+        reply_markup=get_main_keyboard(),
         parse_mode="Markdown",
     )

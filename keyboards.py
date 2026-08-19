@@ -72,3 +72,18 @@ def get_url_done_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Сконвертировать другую ссылку", callback_data="urlconv:new_url")
     return builder.as_markup()
+
+
+def get_broadcast_type_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎯 Выборочно", callback_data="broadcast:targeted")
+    builder.button(text="👥 Всем", callback_data="broadcast:all")
+    builder.adjust(2)
+    builder.row(InlineKeyboardButton(text="Отмена", callback_data="broadcast:cancel"))
+    return builder.as_markup()
+
+
+def get_broadcast_cancel_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Отмена", callback_data="broadcast:cancel")
+    return builder.as_markup()

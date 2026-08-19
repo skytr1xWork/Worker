@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sqlite3
 from datetime import datetime
 
@@ -83,3 +84,48 @@ def delete_user(user_id: int) -> None:
             conn.commit()
     except Exception as e:
         logger.error(f"Failed to delete user {user_id}: {e}")
+
+
+def get_user_id_by_username(username: str) -> int | None:
+    """Finds user_id by username (case-insensitive, strips @)."""
+    clean = username.lstrip("@").strip().lower()
+    if not clean:
+        return None
+    try:
+        with get_connection() as conn:
+            cursor = conn.execute("SELECT user_id FROM users WHERE LOWER(username) = ?", (clean,))
+            row = cursor.fetchone()
+            return row["user_id"] if row else None
+    except Exception as e:
+        logger.error(f"Failed to find user by username {username}: {e}")
+        return None
+
+
+def resolve_recipients(raw_input: str) -> tuple[list[int], list[str]]:
+    """
+    Parses comma/space/newline-separated list of IDs or @usernames.
+    Returns (valid_user_ids, not_found_items).
+    """
+    tokens = [t.strip() for t in re.split(r'[,;\s\n]+', raw_input.strip()) if t.strip()]
+    user_ids = []
+    not_found = []
+
+    for token in tokens:
+        if token.isdigit() or (token.startswith("-") and token[1:].isdigit()):
+            user_ids.append(int(token))
+        else:
+            found_id = get_user_id_by_username(token)
+            if found_id:
+                user_ids.append(found_id)
+            else:
+                not_found.append(token)
+
+    # De-duplicate while preserving order
+    seen = set()
+    unique_ids = []
+    for uid in user_ids:
+        if uid not in seen:
+            seen.add(uid)
+            unique_ids.append(uid)
+
+    return unique_ids, not_found
