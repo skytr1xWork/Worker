@@ -36,6 +36,7 @@ from keyboards import (
     get_cancel_keyboard,
     get_done_keyboard,
     get_format_keyboard,
+    get_help_keyboard,
     get_main_keyboard,
     get_qr_done_keyboard,
     get_shazam_done_keyboard,
@@ -120,16 +121,25 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 @router.message(Command("help"))
 @router.message(F.text == "Помощь")
 @router.message(F.text == "Привет")
-async def cmd_help(message: Message) -> None:
+async def cmd_help(message: Message, state: FSMContext) -> None:
+    await state.update_data(help_menu_msg_id=None)
     help_text = (
-        "Я по факту массивный бот хелпер для всего (по крайней мере по задумке), но так же имею пару комманд, которые могут как то тебя заинтересовать:\n\n"
-        "/support - поддержать любимого skytr1x\n"
-        "/about - а кто такой ваще ваш skytr1x\n\n"
-        "Пользуйтесь на здоровье, и да, подписок в боте не будет хD"
+        "Помощь (может пригодиться)\n\n"
+        "Основные команды:\n"
+        "/convert - запускает конвертер\n"
+        "/url - скачать видео/мп3 по ссылке\n"
+        "/qr - управление QR-кодами\n"
+        "/shazam - распознать музыку из TikTok\n\n"
+        "Дополнительные команды:\n"
+        "/support - поддержать создателя (ну пж)\n"
+        "/about - о создателе бота\n"
+        "/cancel - отменить текущее действие\n\n"
+        "Так же с недавнего времени бот сам понимает, что делать с файлами/ссылками, которые он получает :3\n\n"
+        "Есть вопросы по чему то конкретному?"
     )
     await message.answer(
         help_text,
-        reply_markup=get_main_keyboard(),
+        reply_markup=get_help_keyboard(),
         parse_mode="Markdown",
     )
 
@@ -315,6 +325,89 @@ async def handle_qr_callback(callback: CallbackQuery, state: FSMContext) -> None
         )
 
 
+@router.callback_query(F.data.startswith("help:"))
+async def handle_help_callback(callback: CallbackQuery) -> None:
+    section = callback.data.split(":", 1)[1]
+
+    help_texts = {
+        "converter": (
+            "Простой конвертер файлов.\n\n"
+            "Бот умеет конвертировать:\n\n"
+            "Изображения: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
+            "Документы/тексты: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
+            "Аудио: MP3, WAV, OGG, OPUS, FLAC, AAC, M4A, WMA, AIFF, AMR, AC3, MP2\n"
+            "Видео: MP4, MOV, WEBM, AVI, MKV, GIF, FLV, WMV, 3GP, TS, MPEG, OGV\n\n"
+            "Как использовать:\n"
+            "• Просто отправь файл без сжатия (как документ)\n"
+            "• Выбери нужный формат из предложенных\n"
+            "• Получи готовый файл!\n\n"
+            "Ограничения:\n"
+            "• Входящий файл: до 20 МБ\n"
+            "• Исходящий файл: до 50 МБ\n\n"
+            "Также можно конвертировать голосовые сообщения и кружки!"
+        ),
+        "url_converter": (
+            "Конвертер из ссылок.\n\n"
+            "Поддерживаемые сервисы:\n\n"
+            "▪️ YouTube - видео, Shorts, Music\n"
+            "▪️ Pinterest - пины, фото, видео\n"
+            "▪️ TikTok - видео\n"
+            "▪️ VK - видео, клипы, посты\n"
+            "▪️ Яндекс Дзен - видео, статьи\n\n"
+            "Форматы конвертации:\n"
+            "• MP4 (видео)\n"
+            "• MP3 (аудио)\n"
+            "• PNG (фото/превью)\n\n"
+            "Как использовать:\n"
+            "• Просто отправь ссылку\n"
+            "• Выбери нужный формат\n"
+            "• Дождись загрузки\n\n"
+            "Так же есть ограничения:\n"
+            "• Есть очередь на скачивание (если кто либо так же скачивает что либо)\n"
+            "• Максимальный размер на вывод: 50 МБ"
+        ),
+        "shazam": (
+            "Шазам для Тик Тока (возможно скоро будет больше сервисов)\n\n"
+            "Находит трек по ролику из Тик Тока (не всегда правильно)\n\n"
+            "Что умеет:\n"
+            "• Находить музыку (ну, а че еще)\n"
+            "Как использовать:\n"
+            "• Отправь ссылку на TikTok видео\n"
+            "• Бот распознает музыку автоматически\n"
+            "• Если трек не найден, можешь скачать аудио в MP3\n\n"
+            "Функция подлежит реворку в скором времени. Лучше сейчас не надеятся на 100% точность.\n"
+        ),
+        "general": (
+            "Общая информация\n\n"
+            "О боте:\n"
+            "Я хелпер бот для (и от) skytr1x. Создан для помощи и все (xD)\n\n"
+            "Особенности:\n"
+            "Полностью бесплатный\n"
+            "Без подписок\n"
+            "Постоянно развивается\n\n"
+            "Ограничения:\n"
+            "• Небольшая скорость загрузки\n"
+            "• Лимит на размер файлов (20 МБ на ввод, 50 МБ на вывод)\n"
+            "• Очередь на скачивание по ссылке\n\n"
+            "Быстрый старт:\n"
+            "Просто отправь файл или ссылку - бот сам поймет, что нужно делать!\n\n"
+            "Обратная связь:\n"
+            "По всем вопросам (и идеям тоже) пиши мне (@skytr1xz)\n\n"
+            "Используй /support чтобы поддержать материально создателя (пожалуйста)\n"
+            "Используй /about чтобы узнать больше о создателе"
+        ),
+    }
+
+    text = help_texts.get(section, "Раздел не найден")
+    await callback.answer()
+    if callback.message:
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_help_keyboard(),
+            parse_mode="Markdown",
+        )
+
+
 @router.message(Command("shazam"))
 @router.message(F.text == "Шазам (TikTok)")
 @router.message(F.text.lower() == "шазам (tiktok)")
@@ -449,6 +542,23 @@ async def handle_url_message(message: Message, state: FSMContext) -> None:
         return
 
     current_st = await state.get_state()
+
+    # Автоматическое определение: TikTok ссылка = Shazam
+    if service_key == "tiktok" and current_st not in (UrlConverterState.waiting_for_url, UrlConverterState.selecting_format):
+        await state.set_state(UrlConverterState.selecting_format)
+        await state.update_data(url=url, service=service_key, service_name=service_name)
+
+        caption = (
+            f"Обнаружена ссылка TikTok\n\n"
+            f"Что хочешь сделать?"
+        )
+        await message.answer(
+            caption,
+            reply_markup=get_url_format_keyboard(service_key),
+            parse_mode="Markdown",
+        )
+        return
+
     if current_st == UrlConverterState.waiting_for_shazam_url:
         await process_shazam_for_url(message, url, state)
         return
@@ -458,7 +568,6 @@ async def handle_url_message(message: Message, state: FSMContext) -> None:
 
     caption = (
         f"Ссылка распознана: **{service_name}**\n\n"
-        f"URL: `{url}`\n\n"
         f"Выберите, во что нужно сконвертировать:"
     )
     await message.answer(
@@ -472,6 +581,12 @@ async def handle_url_message(message: Message, state: FSMContext) -> None:
 async def handle_document(message: Message, state: FSMContext) -> None:
     doc = message.document
     if not doc:
+        return
+
+    # Проверка на QR-код в режиме QR
+    current_st = await state.get_state()
+    if current_st == QRState.waiting_for_input:
+        await handle_qr_document(message, state, message.bot)
         return
 
     if doc.file_size and doc.file_size > 20 * 1024 * 1024:
@@ -507,10 +622,11 @@ async def handle_document(message: Message, state: FSMContext) -> None:
     )
 
     caption = (
-        f"Файл получен\n\n"
+        f"Файл получен!\n\n"
         f"Имя: `{file_name}`\n"
-        f"Формат: `{detected_format}`\n\n"
-        f"Выберите в какой формат его нужно конвертировать:"
+        f"Формат: `{detected_format}`\n"
+        f"Размер: {file_size_str}\n\n"
+        f"Выбери формат для конвертации:"
     )
 
     await message.answer(
@@ -557,10 +673,11 @@ async def handle_video(message: Message, state: FSMContext) -> None:
     )
 
     caption = (
-        f"Видео получено\n\n"
+        f"Видео получено!\n\n"
         f"Имя: `{file_name}`\n"
-        f"Формат: `{detected_format}`\n\n"
-        f"Выберите в какой формат его нужно конвертировать:"
+        f"Формат: `{detected_format}`\n"
+        f"Размер: {file_size_str}\n\n"
+        f"Выбери формат для конвертации:"
     )
 
     await message.answer(
@@ -597,10 +714,10 @@ async def handle_video_note(message: Message, state: FSMContext) -> None:
     )
 
     caption = (
-        f"Видеосообщение (кружок) получено\n\n"
+        f"Кружок получен!\n\n"
         f"Формат: `MP4`\n"
         f"Размер: {file_size_str}\n\n"
-        f"Выберите в какой формат его нужно конвертировать:"
+        f"Выбери формат для конвертации:"
     )
 
     await message.answer(
@@ -637,10 +754,11 @@ async def handle_animation(message: Message, state: FSMContext) -> None:
     )
 
     caption = (
-        f"Анимация получена\n\n"
+        f"Анимация получена!\n\n"
         f"Имя: `{file_name}`\n"
-        f"Формат: `{detected_format}`\n\n"
-        f"Выберите в какой формат её нужно конвертировать:"
+        f"Формат: `{detected_format}`\n"
+        f"Размер: {file_size_str}\n\n"
+        f"Выбери формат для конвертации:"
     )
 
     await message.answer(
@@ -687,10 +805,11 @@ async def handle_audio(message: Message, state: FSMContext) -> None:
     )
 
     caption = (
-        f"Аудиофайл получен\n\n"
+        f"Аудиофайл получен!\n\n"
         f"Имя: `{file_name}`\n"
-        f"Формат: `{detected_format}`\n\n"
-        f"Выберите в какой формат его нужно конвертировать:"
+        f"Формат: `{detected_format}`\n"
+        f"Размер: {file_size_str}\n\n"
+        f"Выбери формат для конвертации:"
     )
 
     await message.answer(
@@ -727,10 +846,10 @@ async def handle_voice(message: Message, state: FSMContext) -> None:
     )
 
     caption = (
-        f"Голосовое сообщение получено\n\n"
+        f"Голосовое сообщение получено!\n\n"
         f"Формат: `OPUS`\n"
         f"Размер: {file_size_str}\n\n"
-        f"Выберите в какой формат его нужно конвертировать:"
+        f"Выбери формат для конвертации:"
     )
 
     await message.answer(
@@ -741,8 +860,18 @@ async def handle_voice(message: Message, state: FSMContext) -> None:
 
 
 @router.message(F.photo)
-async def handle_photo(message: Message) -> None:
-    await message.answer("Отправьте фото файлом без сжатия.")
+async def handle_photo(message: Message, state: FSMContext) -> None:
+    current_st = await state.get_state()
+
+    # Если в режиме QR - обрабатываем как QR
+    if current_st == QRState.waiting_for_input:
+        await handle_qr_photo(message, state, message.bot)
+        return
+
+    # Иначе просим отправить без сжатия
+    await message.answer(
+            "Фото без сжатия.\n Отправь его как документ."
+    )
 
 
 @router.callback_query(F.data.startswith("urlconv:"))

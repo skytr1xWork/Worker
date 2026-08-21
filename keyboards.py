@@ -106,3 +106,13 @@ def get_broadcast_cancel_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Отмена", callback_data="broadcast:cancel")
     return builder.as_markup()
+
+
+def get_help_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Конвертер", callback_data="help:converter")
+    builder.button(text="Конвертер из ссылок", callback_data="help:url_converter")
+    builder.button(text="Шазам", callback_data="help:shazam")
+    builder.button(text="Общая помощь", callback_data="help:general")
+    builder.adjust(2, 2)
+    return builder.as_markup()
