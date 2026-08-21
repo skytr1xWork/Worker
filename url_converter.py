@@ -19,8 +19,8 @@ for p in ("/usr/lib/python3.14/site-packages", "/usr/lib/python3/dist-packages",
 
 logger = logging.getLogger(__name__)
 
-# Global semaphore to limit downloads to exactly 1 process at a time (protects Render free tier 512MB RAM)
-DOWNLOAD_SEMAPHORE = asyncio.Semaphore(1)
+# Global semaphore: allow 2 concurrent downloads with optimized memory usage
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
 
 SUPPORTED_SERVICES = {
     "youtube": {
@@ -264,12 +264,13 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
                     shutil.copyfileobj(resp, f)
                 subprocess.run([
                     "ffmpeg", "-y", "-loop", "1", "-i", img_temp,
-                    "-threads", "1",
+                    "-threads", "2",
                     "-c:v", "libx264", "-t", "3", "-pix_fmt", "yuv420p",
                     "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                    "-preset", "veryfast",
                     "-movflags", "+faststart",
                     out_mp4
-                ], capture_output=True, timeout=30)
+                ], capture_output=True, timeout=30, check=False)
                 if os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 0:
                     return out_mp4, "mp4", f"{safe_title}.mp4", os.path.getsize(out_mp4)
                 raise RuntimeError("В этом пине только статическое фото. Выберите формат PNG.")
@@ -284,10 +285,10 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
                 with urllib.request.urlopen(req, timeout=30) as resp, open(temp_vid, "wb") as f:
                     shutil.copyfileobj(resp, f)
                 subprocess.run([
-                    "ffmpeg", "-y", "-threads", "1", "-i", temp_vid,
-                    "-vn", "-c:a", "libmp3lame", "-b:a", "192k",
+                    "ffmpeg", "-y", "-threads", "2", "-i", temp_vid,
+                    "-vn", "-c:a", "libmp3lame", "-b:a", "128k",
                     out_mp3
-                ], capture_output=True, timeout=30)
+                ], capture_output=True, timeout=30, check=False)
                 if os.path.exists(out_mp3) and os.path.getsize(out_mp3) > 0:
                     return out_mp3, "mp3", f"{safe_title}.mp3", os.path.getsize(out_mp3)
             raise RuntimeError("В этом пине нет аудиодорожки.")
@@ -437,19 +438,19 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
             "-c", "copy",
             "-movflags", "+faststart",
             final_mp4
-        ], capture_output=True, timeout=30)
+        ], capture_output=True, timeout=30, check=False)
 
-        # 2. If stream copy failed (e.g. non-mp4 codec), do lightweight transcode with 1 thread
+        # 2. If stream copy failed (e.g. non-mp4 codec), do lightweight transcode with 2 threads
         if cp_res.returncode != 0 or not os.path.exists(final_mp4) or os.path.getsize(final_mp4) == 0:
             subprocess.run([
                 "ffmpeg", "-y", "-i", raw_video_path,
-                "-threads", "1",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
+                "-threads", "2",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
                 "-vf", "scale='min(1280,iw)':-2",
-                "-c:a", "aac", "-b:a", "128k",
+                "-c:a", "aac", "-b:a", "96k",
                 "-movflags", "+faststart",
                 final_mp4
-            ], capture_output=True, timeout=120)
+            ], capture_output=True, timeout=120, check=False)
 
         result_path = final_mp4 if (os.path.exists(final_mp4) and os.path.getsize(final_mp4) > 0) else raw_video_path
         meta = get_url_metadata(url)

@@ -371,6 +371,7 @@ def extract_audio_pcm_from_url(url: str) -> Optional[bytes]:
         ffmpeg_cmd = [
             "ffmpeg",
             "-y",
+            "-threads", "2",
             "-i", temp_audio,
             "-t", "8",
             "-ac", "1",
@@ -378,7 +379,7 @@ def extract_audio_pcm_from_url(url: str) -> Optional[bytes]:
             "-f", "s16le",
             "-",
         ]
-        ff_res = subprocess.run(ffmpeg_cmd, capture_output=True, timeout=20)
+        ff_res = subprocess.run(ffmpeg_cmd, capture_output=True, timeout=20, check=False)
         if ff_res.returncode == 0 and ff_res.stdout:
             return ff_res.stdout
         return None

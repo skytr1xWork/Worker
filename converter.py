@@ -377,39 +377,39 @@ def convert_video(input_bytes: bytes, source_format: str, target_format: str, or
         dst_path = dst_f.name
 
     try:
-        cmd = ["ffmpeg", "-y", "-threads", "1", "-i", src_path]
+        cmd = ["ffmpeg", "-y", "-threads", "2", "-i", src_path]
         if target == "MP4":
-            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"])
+            cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart"])
         elif target == "MKV":
-            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-b:a", "128k"])
+            cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-b:a", "96k"])
         elif target == "MOV":
-            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k"])
+            cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k"])
         elif target == "AVI":
-            cmd.extend(["-c:v", "mpeg4", "-q:v", "4", "-c:a", "libmp3lame", "-b:a", "128k"])
+            cmd.extend(["-c:v", "mpeg4", "-q:v", "5", "-c:a", "libmp3lame", "-b:a", "96k"])
         elif target == "WEBM":
-            cmd.extend(["-c:v", "libvpx", "-b:v", "800k", "-c:a", "libvorbis"])
+            cmd.extend(["-c:v", "libvpx", "-b:v", "600k", "-c:a", "libvorbis", "-q:a", "4"])
         elif target == "GIF":
-            cmd.extend(["-vf", "fps=12,scale=360:-1:flags=lanczos", "-an"])
+            cmd.extend(["-vf", "fps=10,scale=320:-1:flags=lanczos", "-an"])
         elif target == "FLV":
             cmd.extend(["-c:v", "flv1", "-c:a", "libmp3lame", "-ar", "44100"])
         elif target == "WMV":
-            cmd.extend(["-c:v", "wmv2", "-b:v", "1000k", "-c:a", "wmav2", "-b:a", "128k"])
+            cmd.extend(["-c:v", "wmv2", "-b:v", "800k", "-c:a", "wmav2", "-b:a", "96k"])
         elif target == "3GP":
             cmd.extend(["-s", "352x288", "-r", "15", "-c:v", "h263", "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1"])
         elif target == "MPEG":
-            cmd.extend(["-c:v", "mpeg2video", "-c:a", "mp2", "-b:a", "192k"])
+            cmd.extend(["-c:v", "mpeg2video", "-c:a", "mp2", "-b:a", "128k"])
         elif target == "TS":
-            cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-b:a", "128k"])
+            cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-b:a", "96k"])
         elif target == "OGV":
-            cmd.extend(["-c:v", "libtheora", "-q:v", "5", "-c:a", "libvorbis"])
+            cmd.extend(["-c:v", "libtheora", "-q:v", "4", "-c:a", "libvorbis"])
         elif target == "MP3":
-            cmd.extend(["-vn", "-c:a", "libmp3lame", "-b:a", "192k", "-ar", "44100", "-ac", "2"])
+            cmd.extend(["-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", "-ac", "2"])
         elif target == "WAV":
             cmd.extend(["-vn", "-c:a", "pcm_s16le", "-ar", "44100", "-ac", "2"])
 
         cmd.append(dst_path)
 
-        res = subprocess.run(cmd, capture_output=True, timeout=120)
+        res = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
         if res.returncode != 0:
             error_msg = res.stderr.decode("utf-8", errors="replace")
             raise RuntimeError(f"FFmpeg ошибка: {error_msg[-200:]}")
@@ -456,17 +456,17 @@ def convert_audio(input_bytes: bytes, source_format: str, target_format: str, or
         dst_path = dst_f.name
 
     try:
-        cmd = ["ffmpeg", "-y", "-threads", "1", "-i", src_path, "-vn"]
+        cmd = ["ffmpeg", "-y", "-threads", "2", "-i", src_path, "-vn"]
         if target == "MP3":
-            cmd.extend(["-c:a", "libmp3lame", "-b:a", "192k", "-ar", "44100", "-ac", "2"])
+            cmd.extend(["-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", "-ac", "2"])
         elif target == "OPUS":
-            cmd.extend(["-c:a", "libopus", "-b:a", "128k", "-ar", "48000", "-vbr", "on"])
+            cmd.extend(["-c:a", "libopus", "-b:a", "96k", "-ar", "48000", "-vbr", "on"])
         elif target == "OGG":
-            cmd.extend(["-c:a", "libvorbis", "-q:a", "4", "-ar", "44100"])
+            cmd.extend(["-c:a", "libvorbis", "-q:a", "3", "-ar", "44100"])
         elif target == "FLAC":
             cmd.extend(["-c:a", "flac", "-ar", "44100"])
         elif target in ("AAC", "M4A"):
-            cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-movflags", "+faststart"])
+            cmd.extend(["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-movflags", "+faststart"])
         elif target == "WAV":
             cmd.extend(["-c:a", "pcm_s16le", "-ar", "44100", "-ac", "2"])
         elif target == "AMR":
@@ -474,15 +474,15 @@ def convert_audio(input_bytes: bytes, source_format: str, target_format: str, or
         elif target == "AIFF":
             cmd.extend(["-c:a", "pcm_s16be", "-ar", "44100"])
         elif target == "AC3":
-            cmd.extend(["-c:a", "ac3", "-b:a", "192k", "-ar", "44100"])
+            cmd.extend(["-c:a", "ac3", "-b:a", "128k", "-ar", "44100"])
         elif target == "MP2":
-            cmd.extend(["-c:a", "mp2", "-b:a", "192k", "-ar", "44100"])
+            cmd.extend(["-c:a", "mp2", "-b:a", "128k", "-ar", "44100"])
         elif target == "WMA":
-            cmd.extend(["-c:a", "wmav2", "-b:a", "192k", "-ar", "44100"])
+            cmd.extend(["-c:a", "wmav2", "-b:a", "128k", "-ar", "44100"])
 
         cmd.append(dst_path)
 
-        res = subprocess.run(cmd, capture_output=True, timeout=60)
+        res = subprocess.run(cmd, capture_output=True, timeout=60, check=False)
         if res.returncode != 0:
             error_msg = res.stderr.decode("utf-8", errors="replace")
             raise RuntimeError(f"FFmpeg ошибка: {error_msg[-200:]}")
