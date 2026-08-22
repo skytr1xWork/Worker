@@ -76,7 +76,6 @@ HELP_TEXTS = {
     "url_converter": (
         "Конвертер из ссылок.\n\n"
         "Поддерживаемые сервисы:\n\n"
-        " • YouTube - видео, Shorts, Music\n"
         " • Pinterest - пины, фото, видео\n"
         " • TikTok - видео\n"
         " • VK - видео, клипы, посты\n"
@@ -282,7 +281,6 @@ async def start_url_converter_mode(message: Message, state: FSMContext) -> None:
     await state.set_state(UrlConverterState.waiting_for_url)
     prompt_text = (
         "Отправь мне ссылку на медиа из поддерживаемого сервиса:\n"
-        "• YouTube (видео, Shorts, Music)\n"
         "• Pinterest (пины, фото, видео)\n"
         "• TikTok (видео)\n"
         "• VK (видео, клипы, посты)\n"
@@ -528,12 +526,22 @@ async def handle_url_message(message: Message, state: FSMContext) -> None:
         return
 
     service_key, service_name = detect_service(url)
+
+    # YouTube is temporarily disabled
+    if service_key == "youtube":
+        await message.answer(
+            "YouTube временно недоступен.\n"
+            "Новости по поводу его добавления будут [тут](https://t.me/skytr1xHelper)",
+            parse_mode="Markdown",
+        )
+        return
+
     if not service_key:
         current_st = await state.get_state()
         if current_st in (UrlConverterState.waiting_for_url, UrlConverterState.waiting_for_shazam_url):
             await message.answer(
                 "Эта ссылка не принадлежит поддерживаемым сервисам.\n\n"
-                "Поддерживаются: YouTube, Pinterest, TikTok, VK, Яндекс Дзен.",
+                "Поддерживаются: Pinterest, TikTok, VK, Яндекс Дзен.",
                 reply_markup=get_cancel_keyboard(),
             )
         return
@@ -762,7 +770,7 @@ async def handle_url_conversion_callback(callback: CallbackQuery, state: FSMCont
         await state.set_state(UrlConverterState.waiting_for_url)
         if callback.message:
             await callback.message.answer(
-                "Отправь мне ссылку (YouTube, Pinterest, TikTok, VK, Яндекс Дзен):",
+                "Отправь мне ссылку (Pinterest, TikTok, VK, Яндекс Дзен):",
                 reply_markup=get_cancel_keyboard(),
             )
         return
@@ -1071,7 +1079,7 @@ async def handle_unexpected_file_input(message: Message) -> None:
 @router.message(UrlConverterState.waiting_for_url)
 async def handle_unexpected_url_input(message: Message) -> None:
     await message.answer(
-        "Отправьте ссылку на видео, фото или аудио (YouTube, Pinterest, TikTok, VK, Яндекс Дзен).",
+        "Отправьте ссылку на видео, фото или аудио (Pinterest, TikTok, VK, Яндекс Дзен).",
         reply_markup=get_cancel_keyboard(),
     )
 
