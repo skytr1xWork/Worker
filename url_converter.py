@@ -194,23 +194,35 @@ def get_common_ytdlp_args(is_youtube: bool = False) -> list[str]:
         "--no-warnings",
         "--max-filesize", "48M",
     ]
-    if is_youtube:
-        args.extend([
-            "--extractor-args", "youtube:player_client=android,mweb;player_skip=webpage,configs",
-            "--extractor-retries", "3",
-        ])
 
     # Try to use cookies if available (check common locations)
     cookie_paths = [
+        "/tmp/yt-dlp-cookies.txt",
         os.path.expanduser("~/.config/yt-dlp/cookies.txt"),
         os.path.expanduser("~/.yt-dlp/cookies.txt"),
-        "/tmp/yt-dlp-cookies.txt",
     ]
+    cookies_found = False
     for cookie_path in cookie_paths:
         if os.path.exists(cookie_path):
             args.extend(["--cookies", cookie_path])
+            cookies_found = True
             logger.info(f"Using cookies from {cookie_path}")
             break
+
+    if is_youtube:
+        if cookies_found:
+            # When cookies are available, use more permissive client
+            args.extend([
+                "--extractor-args", "youtube:player_client=web,android;player_skip=configs",
+            ])
+        else:
+            # Without cookies, use android/ios clients that don't require auth
+            args.extend([
+                "--extractor-args", "youtube:player_client=android,ios,mweb;player_skip=webpage,configs",
+            ])
+        args.extend([
+            "--extractor-retries", "3",
+        ])
 
     return args
 
@@ -346,37 +358,34 @@ def _build_ytdlp_video_cmd(url: str, output_template: str, is_youtube: bool) -> 
 
 
 def _build_ytdlp_fallback_cmd(url: str, output_template: str, is_youtube: bool, media_type: str) -> list[str]:
+    base_cmd = get_ytdlp_cmd() + [
+        "--no-check-certificates",
+        "--geo-bypass",
+        "--user-agent", "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
+        "--no-playlist",
+        "-o", output_template,
+    ]
+
     if media_type == "audio":
         if is_youtube:
-            return get_ytdlp_cmd() + [
-                "--no-check-certificates",
-                "--geo-bypass",
-                "--extractor-args", "youtube:player_client=ios;player_skip=webpage,configs",
-                "-f", "ba/b/best",
+            return base_cmd + [
+                "--extractor-args", "youtube:player_client=ios,mweb;player_skip=webpage,js,configs",
+                "-f", "ba/worst",
                 "--extract-audio",
                 "--audio-format", "mp3",
-                "--no-playlist",
-                "-o", output_template,
                 url
             ]
     elif media_type == "video":
         if is_youtube:
-            return get_ytdlp_cmd() + [
-                "--no-check-certificates",
-                "--geo-bypass",
-                "--extractor-args", "youtube:player_client=ios;player_skip=webpage,configs",
-                "-f", "b/best",
-                "--no-playlist",
-                "-o", output_template,
+            # Try multiple fallback strategies
+            return base_cmd + [
+                "--extractor-args", "youtube:player_client=ios,tv_embedded;player_skip=webpage,js,configs",
+                "-f", "best[height<=480]/worst",
                 url
             ]
         else:
-            return get_ytdlp_cmd() + [
-                "--no-check-certificates",
-                "--geo-bypass",
-                "-f", "best/b",
-                "--no-playlist",
-                "-o", output_template,
+            return base_cmd + [
+                "-f", "worst/best",
                 url
             ]
     return []
