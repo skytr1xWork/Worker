@@ -247,8 +247,8 @@ def system_resources():
         except Exception:
             pass
 
-    # CPU stats
-    cpu_percent = psutil.cpu_percent(interval=0.1)
+    # CPU stats (interval=None for instant, non-blocking read)
+    cpu_percent = psutil.cpu_percent(interval=None)
     cpu_count = psutil.cpu_count(logical=True)
     cpu_freq = psutil.cpu_freq()
 

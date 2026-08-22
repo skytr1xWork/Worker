@@ -22,6 +22,25 @@ logger = logging.getLogger(__name__)
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
 
 
+def _setup_cookies_from_env():
+    """Setup cookies from environment variable for containerized environments"""
+    yt_cookies_b64 = os.getenv("YT_COOKIES_BASE64")
+    if yt_cookies_b64:
+        import base64
+        cookie_path = "/tmp/yt-dlp-cookies.txt"
+        try:
+            cookie_data = base64.b64decode(yt_cookies_b64)
+            with open(cookie_path, "wb") as f:
+                f.write(cookie_data)
+            logger.info(f"YouTube cookies loaded from YT_COOKIES_BASE64 → {cookie_path}")
+        except Exception as e:
+            logger.warning(f"Failed to decode YT_COOKIES_BASE64: {e}")
+
+
+# Auto-setup cookies on module import
+_setup_cookies_from_env()
+
+
 def ttl_lru_cache(ttl_seconds=300, maxsize=128):
     def decorator(func):
         cache = {}
@@ -130,14 +149,28 @@ def get_common_ytdlp_args(is_youtube: bool = False) -> list[str]:
     args = [
         "--no-check-certificates",
         "--geo-bypass",
-        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "--no-warnings",
         "--max-filesize", "48M",
     ]
     if is_youtube:
         args.extend([
-            "--extractor-args", "youtube:player_client=android;player_skip=webpage,configs"
+            "--extractor-args", "youtube:player_client=android,mweb;player_skip=webpage,configs",
+            "--extractor-retries", "3",
         ])
+
+    # Try to use cookies if available (check common locations)
+    cookie_paths = [
+        os.path.expanduser("~/.config/yt-dlp/cookies.txt"),
+        os.path.expanduser("~/.yt-dlp/cookies.txt"),
+        "/tmp/yt-dlp-cookies.txt",
+    ]
+    for cookie_path in cookie_paths:
+        if os.path.exists(cookie_path):
+            args.extend(["--cookies", cookie_path])
+            logger.info(f"Using cookies from {cookie_path}")
+            break
+
     return args
 
 
