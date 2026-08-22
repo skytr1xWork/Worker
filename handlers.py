@@ -56,6 +56,76 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="main_router")
 
+# константы для текстов
+HELP_TEXTS = {
+    "converter": (
+        "Простой конвертер файлов.\n\n"
+        "Бот умеет конвертировать:\n\n"
+        "Изображения: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
+        "Документы/тексты: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
+        "Аудио: MP3, WAV, OGG, OPUS, FLAC, AAC, M4A, WMA, AIFF, AMR, AC3, MP2\n"
+        "Видео: MP4, MOV, WEBM, AVI, MKV, GIF, FLV, WMV, 3GP, TS, MPEG, OGV\n\n"
+        "Как использовать:\n"
+        "• Просто отправь файл без сжатия (как документ)\n"
+        "• Выбери нужный формат из предложенных\n"
+        "• Получи готовый файл!\n\n"
+        "Ограничения:\n"
+        "• Входящий файл: до 20 МБ\n"
+        "• Исходящий файл: до 50 МБ\n\n"
+        "Также можно конвертировать голосовые сообщения и кружки!"
+    ),
+    "url_converter": (
+        "Конвертер из ссылок.\n\n"
+        "Поддерживаемые сервисы:\n\n"
+        " • YouTube - видео, Shorts, Music\n"
+        " • Pinterest - пины, фото, видео\n"
+        " • TikTok - видео\n"
+        " • VK - видео, клипы, посты\n"
+        " • Яндекс Дзен - видео, статьи\n\n"
+        "Форматы конвертации:\n"
+        "• MP4 (видео)\n"
+        "• MP3 (аудио)\n"
+        "• PNG (фото/превью)\n\n"
+        "Как использовать:\n"
+        "• Просто отправь ссылку\n"
+        "• Выбери нужный формат\n"
+        "• Дождись загрузки\n\n"
+        "Так же есть ограничения:\n"
+        "• Есть очередь на скачивание (если кто либо так же скачивает что либо)\n"
+        "• Максимальный размер на вывод: 50 МБ"
+    ),
+    "shazam": (
+        "Шазам для Тик Тока (возможно скоро будет больше сервисов)\n\n"
+        "Находит трек по ролику из Тик Тока (не всегда правильно)\n\n"
+        "Что умеет:\n"
+        "• Находить музыку (ну, а че еще)\n"
+        "Как использовать:\n"
+        "• Отправь ссылку на TikTok видео\n"
+        "• Бот распознает музыку автоматически\n"
+        "• Если трек не найден, можешь скачать аудио в MP3\n\n"
+        "Функция подлежит реворку в скором времени. Лучше сейчас не надеятся на 100% точность.\n"
+    ),
+    "general": (
+        "Общая информация\n\n"
+        "О боте:\n"
+        "Я хелпер бот для (и от) skytr1x. Создан для помощи и все (xD)\n\n"
+        "Особенности:\n"
+        "Полностью бесплатный\n"
+        "Без подписок\n"
+        "Постоянно развивается\n\n"
+        "Ограничения:\n"
+        "• Небольшая скорость загрузки\n"
+        "• Лимит на размер файлов (20 МБ на ввод, 50 МБ на вывод)\n"
+        "• Очередь на скачивание по ссылке\n\n"
+        "Быстрый старт:\n"
+        "Просто отправь файл или ссылку - бот сам поймет, что нужно делать!\n\n"
+        "Обратная связь:\n"
+        "По всем вопросам (и идеям тоже) пиши мне (@skytr1xz)\n\n"
+        "Используй /support чтобы поддержать материально создателя (пожалуйста)\n"
+        "Используй /about чтобы узнать больше о создателе"
+    ),
+}
+
 
 @router.message.outer_middleware()
 async def track_user_middleware(handler, event: Message, data):
@@ -328,77 +398,7 @@ async def handle_qr_callback(callback: CallbackQuery, state: FSMContext) -> None
 @router.callback_query(F.data.startswith("help:"))
 async def handle_help_callback(callback: CallbackQuery) -> None:
     section = callback.data.split(":", 1)[1]
-
-    help_texts = {
-        "converter": (
-            "Простой конвертер файлов.\n\n"
-            "Бот умеет конвертировать:\n\n"
-            "Изображения: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
-            "Документы/тексты: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
-            "Аудио: MP3, WAV, OGG, OPUS, FLAC, AAC, M4A, WMA, AIFF, AMR, AC3, MP2\n"
-            "Видео: MP4, MOV, WEBM, AVI, MKV, GIF, FLV, WMV, 3GP, TS, MPEG, OGV\n\n"
-            "Как использовать:\n"
-            "• Просто отправь файл без сжатия (как документ)\n"
-            "• Выбери нужный формат из предложенных\n"
-            "• Получи готовый файл!\n\n"
-            "Ограничения:\n"
-            "• Входящий файл: до 20 МБ\n"
-            "• Исходящий файл: до 50 МБ\n\n"
-            "Также можно конвертировать голосовые сообщения и кружки!"
-        ),
-        "url_converter": (
-            "Конвертер из ссылок.\n\n"
-            "Поддерживаемые сервисы:\n\n"
-            " • YouTube - видео, Shorts, Music\n"
-            " • Pinterest - пины, фото, видео\n"
-            " • TikTok - видео\n"
-            " • VK - видео, клипы, посты\n"
-            " • Яндекс Дзен - видео, статьи\n\n"
-            "Форматы конвертации:\n"
-            "• MP4 (видео)\n"
-            "• MP3 (аудио)\n"
-            "• PNG (фото/превью)\n\n"
-            "Как использовать:\n"
-            "• Просто отправь ссылку\n"
-            "• Выбери нужный формат\n"
-            "• Дождись загрузки\n\n"
-            "Так же есть ограничения:\n"
-            "• Есть очередь на скачивание (если кто либо так же скачивает что либо)\n"
-            "• Максимальный размер на вывод: 50 МБ"
-        ),
-        "shazam": (
-            "Шазам для Тик Тока (возможно скоро будет больше сервисов)\n\n"
-            "Находит трек по ролику из Тик Тока (не всегда правильно)\n\n"
-            "Что умеет:\n"
-            "• Находить музыку (ну, а че еще)\n"
-            "Как использовать:\n"
-            "• Отправь ссылку на TikTok видео\n"
-            "• Бот распознает музыку автоматически\n"
-            "• Если трек не найден, можешь скачать аудио в MP3\n\n"
-            "Функция подлежит реворку в скором времени. Лучше сейчас не надеятся на 100% точность.\n"
-        ),
-        "general": (
-            "Общая информация\n\n"
-            "О боте:\n"
-            "Я хелпер бот для (и от) skytr1x. Создан для помощи и все (xD)\n\n"
-            "Особенности:\n"
-            "Полностью бесплатный\n"
-            "Без подписок\n"
-            "Постоянно развивается\n\n"
-            "Ограничения:\n"
-            "• Небольшая скорость загрузки\n"
-            "• Лимит на размер файлов (20 МБ на ввод, 50 МБ на вывод)\n"
-            "• Очередь на скачивание по ссылке\n\n"
-            "Быстрый старт:\n"
-            "Просто отправь файл или ссылку - бот сам поймет, что нужно делать!\n\n"
-            "Обратная связь:\n"
-            "По всем вопросам (и идеям тоже) пиши мне (@skytr1xz)\n\n"
-            "Используй /support чтобы поддержать материально создателя (пожалуйста)\n"
-            "Используй /about чтобы узнать больше о создателе"
-        ),
-    }
-
-    text = help_texts.get(section, "Раздел не найден")
+    text = HELP_TEXTS.get(section, "Раздел не найден")
     await callback.answer()
     if callback.message:
         await callback.message.edit_text(
@@ -577,30 +577,33 @@ async def handle_url_message(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(F.document)
-async def handle_document(message: Message, state: FSMContext) -> None:
-    doc = message.document
-    if not doc:
-        return
-
-    # Проверка на QR-код в режиме QR
+async def process_media_file(
+    message: Message,
+    state: FSMContext,
+    file_id: str,
+    file_name: str | None,
+    file_size: int | None,
+    mime_type: str | None,
+    media_type: str,
+) -> None:
     current_st = await state.get_state()
-    if current_st == QRState.waiting_for_input:
+
+    if current_st == QRState.waiting_for_input and media_type == "document":
         await handle_qr_document(message, state, message.bot)
         return
 
-    if doc.file_size and doc.file_size > 20 * 1024 * 1024:
+    if file_size and file_size > 20 * 1024 * 1024:
         await message.answer(
             "Размер файла превышает 20 МБ.\n"
             "Пожалуйста, отправьте файл меньшего размера."
         )
         return
 
-    category, detected_format = detect_file_type(doc.file_name, doc.mime_type)
+    category, detected_format = detect_file_type(file_name, mime_type)
 
     if not detected_format or not category:
         await message.answer(
-            f"Файл «{doc.file_name or 'документ'}» в неподдерживаемом формате.\n\n"
+            f"Файл «{file_name or 'документ'}» в неподдерживаемом формате.\n\n"
             "Поддерживаемые форматы:\n"
             "• Картинки: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
             "• Документы: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
@@ -609,21 +612,30 @@ async def handle_document(message: Message, state: FSMContext) -> None:
         )
         return
 
-    file_name = doc.file_name or f"file.{detected_format.lower()}"
-    file_size_str = format_size(doc.file_size or 0)
+    file_name_safe = file_name or f"file.{detected_format.lower()}"
+    file_size_str = format_size(file_size or 0)
 
     await state.set_state(ConverterState.selecting_format)
     await state.update_data(
-        file_id=doc.file_id,
-        file_name=file_name,
+        file_id=file_id,
+        file_name=file_name_safe,
         source_format=detected_format,
         category=category,
-        file_size=doc.file_size or 0,
+        file_size=file_size or 0,
     )
 
+    media_labels = {
+        "document": "Файл",
+        "video": "Видео",
+        "audio": "Аудиофайл",
+        "voice": "Голосовое сообщение",
+        "video_note": "Кружок",
+        "animation": "Анимация",
+    }
+
     caption = (
-        f"Файл получен!\n\n"
-        f"Имя: `{file_name}`\n"
+        f"{media_labels.get(media_type, 'Файл')} получен!\n\n"
+        f"Имя: `{file_name_safe}`\n"
         f"Формат: `{detected_format}`\n"
         f"Размер: {file_size_str}\n\n"
         f"Выбери формат для конвертации:"
@@ -636,17 +648,20 @@ async def handle_document(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.message(F.document)
+async def handle_document(message: Message, state: FSMContext) -> None:
+    doc = message.document
+    if not doc:
+        return
+    await process_media_file(
+        message, state, doc.file_id, doc.file_name, doc.file_size, doc.mime_type, "document"
+    )
+
+
 @router.message(F.video)
 async def handle_video(message: Message, state: FSMContext) -> None:
     video = message.video
     if not video:
-        return
-
-    if video.file_size and video.file_size > 20 * 1024 * 1024:
-        await message.answer(
-            "Размер файла превышает 20 МБ.\n"
-            "Пожалуйста, отправьте файл меньшего размера."
-        )
         return
 
     detected_format = "MP4"
@@ -661,29 +676,8 @@ async def handle_video(message: Message, state: FSMContext) -> None:
                 break
 
     file_name = video.file_name or f"video.{detected_format.lower()}"
-    file_size_str = format_size(video.file_size or 0)
-
-    await state.set_state(ConverterState.selecting_format)
-    await state.update_data(
-        file_id=video.file_id,
-        file_name=file_name,
-        source_format=detected_format,
-        category="video",
-        file_size=video.file_size or 0,
-    )
-
-    caption = (
-        f"Видео получено!\n\n"
-        f"Имя: `{file_name}`\n"
-        f"Формат: `{detected_format}`\n"
-        f"Размер: {file_size_str}\n\n"
-        f"Выбери формат для конвертации:"
-    )
-
-    await message.answer(
-        caption,
-        reply_markup=get_format_keyboard(detected_format, category="video"),
-        parse_mode="Markdown",
+    await process_media_file(
+        message, state, video.file_id, file_name, video.file_size, video.mime_type, "video"
     )
 
 
@@ -692,38 +686,8 @@ async def handle_video_note(message: Message, state: FSMContext) -> None:
     vn = message.video_note
     if not vn:
         return
-
-    if vn.file_size and vn.file_size > 20 * 1024 * 1024:
-        await message.answer(
-            "Размер файла превышает 20 МБ.\n"
-            "Пожалуйста, отправьте файл меньшего размера."
-        )
-        return
-
-    file_name = "video_note.mp4"
-    detected_format = "MP4"
-    file_size_str = format_size(vn.file_size or 0)
-
-    await state.set_state(ConverterState.selecting_format)
-    await state.update_data(
-        file_id=vn.file_id,
-        file_name=file_name,
-        source_format=detected_format,
-        category="video",
-        file_size=vn.file_size or 0,
-    )
-
-    caption = (
-        f"Кружок получен!\n\n"
-        f"Формат: `MP4`\n"
-        f"Размер: {file_size_str}\n\n"
-        f"Выбери формат для конвертации:"
-    )
-
-    await message.answer(
-        caption,
-        reply_markup=get_format_keyboard(detected_format, category="video"),
-        parse_mode="Markdown",
+    await process_media_file(
+        message, state, vn.file_id, "video_note.mp4", vn.file_size, "video/mp4", "video_note"
     )
 
 
@@ -733,38 +697,10 @@ async def handle_animation(message: Message, state: FSMContext) -> None:
     if not anim:
         return
 
-    if anim.file_size and anim.file_size > 20 * 1024 * 1024:
-        await message.answer(
-            "Размер файла превышает 20 МБ.\n"
-            "Пожалуйста, отправьте файл меньшего размера."
-        )
-        return
-
     file_name = anim.file_name or "animation.mp4"
     detected_format = "GIF" if anim.mime_type == "image/gif" else "MP4"
-    file_size_str = format_size(anim.file_size or 0)
-
-    await state.set_state(ConverterState.selecting_format)
-    await state.update_data(
-        file_id=anim.file_id,
-        file_name=file_name,
-        source_format=detected_format,
-        category="video",
-        file_size=anim.file_size or 0,
-    )
-
-    caption = (
-        f"Анимация получена!\n\n"
-        f"Имя: `{file_name}`\n"
-        f"Формат: `{detected_format}`\n"
-        f"Размер: {file_size_str}\n\n"
-        f"Выбери формат для конвертации:"
-    )
-
-    await message.answer(
-        caption,
-        reply_markup=get_format_keyboard(detected_format, category="video"),
-        parse_mode="Markdown",
+    await process_media_file(
+        message, state, anim.file_id, file_name, anim.file_size, anim.mime_type, "animation"
     )
 
 
@@ -772,13 +708,6 @@ async def handle_animation(message: Message, state: FSMContext) -> None:
 async def handle_audio(message: Message, state: FSMContext) -> None:
     audio = message.audio
     if not audio:
-        return
-
-    if audio.file_size and audio.file_size > 20 * 1024 * 1024:
-        await message.answer(
-            "Размер файла превышает 20 МБ.\n"
-            "Пожалуйста, отправьте файл меньшего размера."
-        )
         return
 
     detected_format = "MP3"
@@ -793,29 +722,8 @@ async def handle_audio(message: Message, state: FSMContext) -> None:
                 break
 
     file_name = audio.file_name or f"audio.{detected_format.lower()}"
-    file_size_str = format_size(audio.file_size or 0)
-
-    await state.set_state(ConverterState.selecting_format)
-    await state.update_data(
-        file_id=audio.file_id,
-        file_name=file_name,
-        source_format=detected_format,
-        category="audio",
-        file_size=audio.file_size or 0,
-    )
-
-    caption = (
-        f"Аудиофайл получен!\n\n"
-        f"Имя: `{file_name}`\n"
-        f"Формат: `{detected_format}`\n"
-        f"Размер: {file_size_str}\n\n"
-        f"Выбери формат для конвертации:"
-    )
-
-    await message.answer(
-        caption,
-        reply_markup=get_format_keyboard(detected_format, category="audio"),
-        parse_mode="Markdown",
+    await process_media_file(
+        message, state, audio.file_id, file_name, audio.file_size, audio.mime_type, "audio"
     )
 
 
@@ -824,38 +732,8 @@ async def handle_voice(message: Message, state: FSMContext) -> None:
     voice = message.voice
     if not voice:
         return
-
-    if voice.file_size and voice.file_size > 20 * 1024 * 1024:
-        await message.answer(
-            "Размер файла превышает 20 МБ.\n"
-            "Пожалуйста, отправьте файл меньшего размера."
-        )
-        return
-
-    file_name = "voice.opus"
-    detected_format = "OPUS"
-    file_size_str = format_size(voice.file_size or 0)
-
-    await state.set_state(ConverterState.selecting_format)
-    await state.update_data(
-        file_id=voice.file_id,
-        file_name=file_name,
-        source_format=detected_format,
-        category="audio",
-        file_size=voice.file_size or 0,
-    )
-
-    caption = (
-        f"Голосовое сообщение получено!\n\n"
-        f"Формат: `OPUS`\n"
-        f"Размер: {file_size_str}\n\n"
-        f"Выбери формат для конвертации:"
-    )
-
-    await message.answer(
-        caption,
-        reply_markup=get_format_keyboard(detected_format, category="audio"),
-        parse_mode="Markdown",
+    await process_media_file(
+        message, state, voice.file_id, "voice.opus", voice.file_size, "audio/opus", "voice"
     )
 
 
@@ -863,12 +741,10 @@ async def handle_voice(message: Message, state: FSMContext) -> None:
 async def handle_photo(message: Message, state: FSMContext) -> None:
     current_st = await state.get_state()
 
-    # Если в режиме QR - обрабатываем как QR
     if current_st == QRState.waiting_for_input:
         await handle_qr_photo(message, state, message.bot)
         return
 
-    # Иначе просим отправить без сжатия
     await message.answer(
             "Фото без сжатия.\n Отправь его как документ."
     )
@@ -914,7 +790,6 @@ async def handle_url_conversion_callback(callback: CallbackQuery, state: FSMCont
 
     await callback.answer(f"Запрос принят: {target_format}")
 
-    # If another download process is already running, notify about the queue
     if DOWNLOAD_SEMAPHORE.locked():
         if callback.message:
             await callback.message.edit_text(
@@ -1204,24 +1079,14 @@ async def handle_unexpected_url_input(message: Message) -> None:
         reply_markup=get_cancel_keyboard(),
     )
 
-
-# ==========================================
-# Admin Broadcast (/sl) System
-# ==========================================
-
 @router.message(Command("sl"))
 @router.message(F.text.lower() == "sl")
 async def cmd_broadcast_start(message: Message, state: FSMContext) -> None:
-    """
-    Starts the broadcast wizard for authorized admins.
-    Shows buttons 'Выборочно' and 'Всем'.
-    """
     if not message.from_user:
         return
 
     admin_ids = get_admin_ids()
     if not admin_ids or message.from_user.id not in admin_ids:
-        # Non-admin: silently ignore
         return
 
     await state.clear()
@@ -1312,6 +1177,38 @@ async def handle_broadcast_recipients_input(message: Message, state: FSMContext)
     )
 
 
+async def send_message_batch(bot: Bot, message: Message, user_ids: list[int], batch_size: int = 25):
+    success_count = 0
+    failed_count = 0
+    blocked_count = 0
+
+    for i in range(0, len(user_ids), batch_size):
+        batch = user_ids[i:i + batch_size]
+        tasks = [
+            bot.copy_message(
+                chat_id=uid,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id
+            )
+            for uid in batch
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, Exception):
+                failed_count += 1
+                err_str = str(result).lower()
+                if any(k in err_str for k in ["forbidden", "blocked", "deactivated", "chat not found", "user is deactivated"]):
+                    blocked_count += 1
+            else:
+                success_count += 1
+
+        if i + batch_size < len(user_ids):
+            await asyncio.sleep(1.0)
+
+    return success_count, failed_count, blocked_count
+
+
 @router.message(BroadcastState.waiting_for_message)
 async def handle_broadcast_message_input(message: Message, state: FSMContext, bot: Bot) -> None:
     admin_ids = get_admin_ids()
@@ -1344,38 +1241,9 @@ async def handle_broadcast_message_input(message: Message, state: FSMContext, bo
         parse_mode="Markdown",
     )
 
-    success_count = 0
-    failed_count = 0
-    blocked_count = 0
-
-    for idx, uid in enumerate(user_ids, 1):
-        try:
-            # Copy message preserves everything: text, photo, video, caption, entities, audio, etc.
-            await bot.copy_message(
-                chat_id=uid,
-                from_chat_id=message.chat.id,
-                message_id=message.message_id,
-            )
-            success_count += 1
-        except Exception as exc:
-            failed_count += 1
-            err_str = str(exc).lower()
-            if any(k in err_str for k in ("forbidden", "blocked", "deactivated", "chat not found", "user is deactivated")):
-                blocked_count += 1
-
-        # Rate limit: 25 messages per second
-        await asyncio.sleep(0.04)
-
-        if total_users > 20 and (idx % 25 == 0 or idx == total_users):
-            try:
-                await status_msg.edit_text(
-                    f"⏳ **Рассылка в процессе...** ({idx}/{total_users})\n"
-                    f"✅ Доставлено: {success_count}\n"
-                    f"❌ Ошибок / заблокировано: {failed_count}",
-                    parse_mode="Markdown",
-                )
-            except Exception:
-                pass
+    success_count, failed_count, blocked_count = await send_message_batch(
+        bot, message, user_ids, batch_size=25
+    )
 
     await message.answer(
         f"📢 **Рассылка успешно завершена!**\n\n"

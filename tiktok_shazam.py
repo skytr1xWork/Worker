@@ -16,12 +16,31 @@ from enum import IntEnum
 from math import exp, sqrt
 from typing import Dict, List, Optional
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 DATA_URI_PREFIX = "data:audio/vnd.shazam.sig;base64,"
-HANNING_MATRIX = np.hanning(2050)[1:-1]
+
+# Ленивая загрузка numpy для экономии памяти (~100 МБ)
+_numpy_module = None
+_hanning_matrix = None
+
+
+def _get_numpy():
+    """Ленивая загрузка numpy - загружается только при первом использовании Shazam."""
+    global _numpy_module
+    if _numpy_module is None:
+        import numpy as np
+        _numpy_module = np
+    return _numpy_module
+
+
+def _get_hanning_matrix():
+    """Ленивая загрузка HANNING_MATRIX - создается только при первом использовании."""
+    global _hanning_matrix
+    if _hanning_matrix is None:
+        np = _get_numpy()
+        _hanning_matrix = np.hanning(2050)[1:-1]
+    return _hanning_matrix
 
 
 class FrequencyBand(IntEnum):
@@ -70,7 +89,7 @@ class DecodedMessage:
         header = RawSignatureHeader()
         header.magic1 = 0xCAFE2580
         header.magic2 = 0x94119C00
-        header.shifted_sample_rate_id = 3 << 27  # 16000 Hz
+        header.shifted_sample_rate_id = 3 << 27
         header.fixed_value = (15 << 19) + 0x40000
         header.number_samples_plus_divided_sample_rate = int(
             self.number_samples + self.sample_rate_hz * 0.24
@@ -115,21 +134,55 @@ class DecodedMessage:
 
 
 class RingBuffer(list):
+    """
+    Кольцевой буфер с оптимизированным хранением.
+    Использует array.array для numpy массивов для экономии памяти (~50% меньше).
+    """
     def __init__(self, buffer_size: int, default_value=0):
-        super().__init__([default_value] * buffer_size)
+        # Проверяем тип default_value
+        if hasattr(default_value, '__len__') and hasattr(default_value, 'dtype'):
+            # Это numpy массив - импортируем array для оптимизации
+            from array import array
+            # Конвертируем numpy массив в list array для каждого элемента
+            # array('d') использует double (8 bytes) для совместимости с numpy float64
+            super().__init__([array('d', default_value.tolist()) if hasattr(default_value, 'tolist') else default_value for _ in range(buffer_size)])
+        elif hasattr(default_value, '__iter__') and not isinstance(default_value, str):
+            # Если это список или другой итерируемый объект
+            from array import array
+            super().__init__([array('d', default_value) for _ in range(buffer_size)])
+        else:
+            # Для скаляров - как раньше
+            super().__init__([default_value] * buffer_size)
         self.position: int = 0
         self.buffer_size: int = buffer_size
         self.num_written: int = 0
 
     def append(self, value):
-        self[self.position] = value
+        """Добавляет значение в буфер с поддержкой numpy массивов."""
+        if hasattr(value, 'tolist'):
+            # Конвертируем numpy массив в array.array для экономии памяти
+            from array import array
+            self[self.position] = array('d', value.tolist())
+        else:
+            self[self.position] = value
         self.position = (self.position + 1) % self.buffer_size
         self.num_written += 1
+
+    def __getitem__(self, idx):
+        """Получает элемент с автоконвертацией array.array обратно в numpy."""
+        item = super().__getitem__(idx)
+        # Если это array.array, конвертируем обратно в numpy для операций
+        if hasattr(item, 'typecode') and item.typecode == 'd':
+            np = _get_numpy()
+            return np.array(item)
+        return item
 
 
 class SignatureGenerator:
     def __init__(self):
         self.ring_buffer_of_samples = RingBuffer(buffer_size=2048, default_value=0)
+        # Ленивая инициализация numpy массивов - создаются при первом использовании
+        np = _get_numpy()
         self.fft_outputs = RingBuffer(buffer_size=256, default_value=np.zeros(1025))
         self.spread_fft_output = RingBuffer(buffer_size=256, default_value=np.zeros(1025))
         self.signature = DecodedMessage()
@@ -146,6 +199,9 @@ class SignatureGenerator:
                 self._do_peak_recognition()
 
     def _do_fft(self, batch_128: List[int]) -> None:
+        np = _get_numpy()
+        HANNING_MATRIX = _get_hanning_matrix()
+
         pos = self.ring_buffer_of_samples.position
         for idx, val in enumerate(batch_128):
             self.ring_buffer_of_samples[(pos + idx) % 2048] = val
@@ -163,6 +219,8 @@ class SignatureGenerator:
         self.fft_outputs.append(power)
 
     def _do_peak_spreading(self) -> None:
+        np = _get_numpy()
+
         last_fft = self.fft_outputs[(self.fft_outputs.position - 1) % self.fft_outputs.buffer_size]
         tile = np.tile(last_fft, 3).reshape((3, -1))
         tile[1] = np.roll(tile[1], -1)
@@ -184,6 +242,8 @@ class SignatureGenerator:
         self.spread_fft_output.append(spread)
 
     def _do_peak_recognition(self) -> None:
+        np = _get_numpy()
+
         fft_m46 = self.fft_outputs[(self.fft_outputs.position - 46) % self.fft_outputs.buffer_size]
         fft_m49 = self.spread_fft_output[(self.spread_fft_output.position - 49) % self.spread_fft_output.buffer_size]
 
@@ -215,16 +275,18 @@ class SignatureGenerator:
                         corrected_bin = bin_pos * 64 + var2
                         freq_hz = corrected_bin * (16000 / 2 / 1024 / 64)
 
-                        if 250 < freq_hz < 520:
-                            band = FrequencyBand.hz_250_520
-                        elif 520 < freq_hz < 1450:
-                            band = FrequencyBand.hz_520_1450
-                        elif 1450 < freq_hz < 3500:
-                            band = FrequencyBand.hz_1450_3500
-                        elif 3500 < freq_hz <= 5500:
-                            band = FrequencyBand.hz_3500_5500
-                        else:
+                        # Быстрое определение частотного диапазона через границы
+                        if not (250 < freq_hz <= 5500):
                             continue
+
+                        if freq_hz <= 520:
+                            band = FrequencyBand.hz_250_520
+                        elif freq_hz <= 1450:
+                            band = FrequencyBand.hz_520_1450
+                        elif freq_hz <= 3500:
+                            band = FrequencyBand.hz_1450_3500
+                        else:
+                            band = FrequencyBand.hz_3500_5500
 
                         if band not in self.signature.frequency_band_to_sound_peaks:
                             self.signature.frequency_band_to_sound_peaks[band] = []

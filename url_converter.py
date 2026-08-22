@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 from PIL import Image
 
@@ -21,6 +22,61 @@ logger = logging.getLogger(__name__)
 
 # Global semaphore: allow 2 concurrent downloads with optimized memory usage
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
+
+
+def ttl_lru_cache(ttl_seconds=300, maxsize=128):
+    """
+    LRU кэш с TTL (Time To Live) для кэширования результатов с автоматической очисткой.
+
+    Args:
+        ttl_seconds: время жизни записи в кэше (по умолчанию 300 сек = 5 мин)
+        maxsize: максимальное количество записей в кэше
+    """
+    def decorator(func):
+        cache = {}
+        cache_times = {}
+
+        def wrapper(url: str):
+            current_time = time.time()
+
+            # Проверяем кэш
+            if url in cache:
+                if current_time - cache_times[url] < ttl_seconds:
+                    logger.debug(f"Pinterest cache HIT: {url}")
+                    return cache[url]
+                else:
+                    # Устаревшая запись
+                    logger.debug(f"Pinterest cache EXPIRED: {url}")
+                    del cache[url]
+                    del cache_times[url]
+
+            # Вызываем функцию
+            logger.debug(f"Pinterest cache MISS: {url}")
+            result = func(url)
+
+            # Сохраняем в кэш
+            cache[url] = result
+            cache_times[url] = current_time
+
+            # Ограничение размера кэша
+            if len(cache) > maxsize:
+                oldest = min(cache_times.items(), key=lambda x: x[1])[0]
+                logger.debug(f"Pinterest cache EVICT: {oldest}")
+                del cache[oldest]
+                del cache_times[oldest]
+
+            return result
+
+        # Добавляем методы для управления кэшем
+        wrapper.cache_clear = lambda: (cache.clear(), cache_times.clear())
+        wrapper.cache_info = lambda: {
+            "size": len(cache),
+            "maxsize": maxsize,
+            "ttl_seconds": ttl_seconds
+        }
+
+        return wrapper
+    return decorator
 
 SUPPORTED_SERVICES = {
     "youtube": {
@@ -121,10 +177,13 @@ def extract_first_url(text: str) -> str | None:
     return match.group(0) if match else None
 
 
+@ttl_lru_cache(ttl_seconds=300, maxsize=128)
 def _get_pinterest_media(url: str) -> dict:
     """
     Directly extracts direct video and image URLs from Pinterest pin page with gzip support.
     Returns dict with keys: video_url, image_url, title.
+
+    Кэшируется на 5 минут для устранения дублирования HTTP запросов.
     """
     try:
         import gzip
@@ -215,6 +274,76 @@ def get_url_metadata(url: str) -> dict:
         "uploader": None,
         "is_live": False
     }
+
+
+def _build_ytdlp_audio_cmd(url: str, output_template: str, is_youtube: bool) -> list[str]:
+    """Строит команду yt-dlp для скачивания аудио."""
+    base = get_ytdlp_cmd() + get_common_ytdlp_args(is_youtube=is_youtube)
+    format_arg = ["-f", "ba/b/best"] if is_youtube else ["-f", "bestaudio/best"]
+    return base + format_arg + [
+        "--extract-audio",
+        "--audio-format", "mp3",
+        "--audio-quality", "5",
+        "--no-playlist",
+        "-o", output_template,
+        url
+    ]
+
+
+def _build_ytdlp_video_cmd(url: str, output_template: str, is_youtube: bool) -> list[str]:
+    """Строит команду yt-dlp для скачивания видео."""
+    base = get_ytdlp_cmd() + get_common_ytdlp_args(is_youtube=is_youtube)
+
+    if is_youtube:
+        format_spec = "18/22/b[height<=720]/best[height<=720][ext=mp4]/b/best"
+    else:
+        format_spec = "bestvideo[height<=720]+bestaudio/best[height<=720]/best/b"
+
+    return base + [
+        "-f", format_spec,
+        "--merge-output-format", "mp4",
+        "--no-playlist",
+        "-o", output_template,
+        url
+    ]
+
+
+def _build_ytdlp_fallback_cmd(url: str, output_template: str, is_youtube: bool, media_type: str) -> list[str]:
+    """Строит fallback команду yt-dlp при первичной неудаче."""
+    if media_type == "audio":
+        if is_youtube:
+            return get_ytdlp_cmd() + [
+                "--no-check-certificates",
+                "--geo-bypass",
+                "--extractor-args", "youtube:player_client=ios;player_skip=webpage,configs",
+                "-f", "ba/b/best",
+                "--extract-audio",
+                "--audio-format", "mp3",
+                "--no-playlist",
+                "-o", output_template,
+                url
+            ]
+    elif media_type == "video":
+        if is_youtube:
+            return get_ytdlp_cmd() + [
+                "--no-check-certificates",
+                "--geo-bypass",
+                "--extractor-args", "youtube:player_client=ios;player_skip=webpage,configs",
+                "-f", "b/best",
+                "--no-playlist",
+                "-o", output_template,
+                url
+            ]
+        else:
+            return get_ytdlp_cmd() + [
+                "--no-check-certificates",
+                "--geo-bypass",
+                "-f", "best/b",
+                "--no-playlist",
+                "-o", output_template,
+                url
+            ]
+    return []
 
 
 def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple[str, str, str, int]:
@@ -342,30 +471,12 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
     # Case 2: Download MP3 Audio
     elif target_format == "MP3":
         out_template = os.path.join(output_dir, "audio.%(ext)s")
-        format_arg = ["-f", "ba/b/best"] if is_yt else ["-f", "bestaudio/best"]
-        cmd_audio = ytdlp_base + format_arg + [
-            "--extract-audio",
-            "--audio-format", "mp3",
-            "--audio-quality", "5",
-            "--no-playlist",
-            "-o", out_template,
-            url
-        ]
+        cmd_audio = _build_ytdlp_audio_cmd(url, out_template, is_yt)
         res = subprocess.run(cmd_audio, capture_output=True, text=True, timeout=90)
 
         # Fallback if first attempt failed on YouTube
         if res.returncode != 0 and is_yt:
-            cmd_fallback = get_ytdlp_cmd() + [
-                "--no-check-certificates",
-                "--geo-bypass",
-                "--extractor-args", "youtube:player_client=ios;player_skip=webpage,configs",
-                "-f", "ba/b/best",
-                "--extract-audio",
-                "--audio-format", "mp3",
-                "--no-playlist",
-                "-o", out_template,
-                url
-            ]
+            cmd_fallback = _build_ytdlp_fallback_cmd(url, out_template, is_yt, "audio")
             res = subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=90)
 
         for f in os.listdir(output_dir):
@@ -381,42 +492,12 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
     # Case 3: Download MP4 Video
     else:
         out_template = os.path.join(output_dir, "video.%(ext)s")
-        # Format selector: YouTube uses progressive 18/22/b, others use bestvideo+bestaudio/best
-        if is_yt:
-            format_spec = "18/22/b[height<=720]/best[height<=720][ext=mp4]/b/best"
-        else:
-            format_spec = "bestvideo[height<=720]+bestaudio/best[height<=720]/best/b"
-
-        cmd_video = ytdlp_base + [
-            "-f", format_spec,
-            "--merge-output-format", "mp4",
-            "--no-playlist",
-            "-o", out_template,
-            url
-        ]
+        cmd_video = _build_ytdlp_video_cmd(url, out_template, is_yt)
         res = subprocess.run(cmd_video, capture_output=True, text=True, timeout=120)
 
         # Fallback if first attempt failed
         if res.returncode != 0:
-            if is_yt:
-                cmd_fallback = get_ytdlp_cmd() + [
-                    "--no-check-certificates",
-                    "--geo-bypass",
-                    "--extractor-args", "youtube:player_client=ios;player_skip=webpage,configs",
-                    "-f", "b/best",
-                    "--no-playlist",
-                    "-o", out_template,
-                    url
-                ]
-            else:
-                cmd_fallback = get_ytdlp_cmd() + [
-                    "--no-check-certificates",
-                    "--geo-bypass",
-                    "-f", "best/b",
-                    "--no-playlist",
-                    "-o", out_template,
-                    url
-                ]
+            cmd_fallback = _build_ytdlp_fallback_cmd(url, out_template, is_yt, "video")
             res = subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=120)
 
         raw_video_path = None

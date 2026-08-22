@@ -10,9 +10,6 @@ from docx import Document
 import markdown
 from PIL import Image
 
-# ==========================================
-# Image Formats
-# ==========================================
 SUPPORTED_IMAGE_FORMATS = {
     "PNG": {"ext": "png", "mime": "image/png"},
     "JPG": {"ext": "jpg", "mime": "image/jpeg"},
@@ -50,9 +47,6 @@ IMAGE_MIME_TYPES = {
     "image/gif": "GIF",
 }
 
-# ==========================================
-# Document Formats
-# ==========================================
 SUPPORTED_DOCUMENT_FORMATS = {
     "DOCX": {"ext": "docx", "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
     "MD": {"ext": "md", "mime": "text/markdown"},
@@ -107,9 +101,6 @@ DOCUMENT_TARGETS = {
     "HTML": ["MD", "TXT", "DOCX", "JSON", "DAT", "LOG"],
 }
 
-# ==========================================
-# Audio Formats
-# ==========================================
 SUPPORTED_AUDIO_FORMATS = {
     "MP3": {"ext": "mp3", "mime": "audio/mpeg"},
     "WAV": {"ext": "wav", "mime": "audio/wav"},
@@ -242,82 +233,125 @@ def normalize_format(fmt: str) -> str:
     return cleaned
 
 
+def calculate_timeout(operation: str, file_size_bytes: int) -> int:
+    """
+    Вычисляет оптимальный таймаут на основе операции и размера файла.
+
+    Args:
+        operation: тип операции ("video", "audio", "image", "document")
+        file_size_bytes: размер входного файла в байтах
+
+    Returns:
+        Таймаут в секундах (минимум 10, максимум 180)
+
+    Примеры:
+        1 МБ видео → 34 сек
+        5 МБ видео → 52 сек
+        20 МБ видео → 118 сек
+        1 МБ аудио → 24 сек
+    """
+    file_size_mb = file_size_bytes / (1024 * 1024)
+
+    # Базовые таймауты для разных типов операций
+    base_timeouts = {
+        "video": 30,      # Базовый таймаут для видео
+        "audio": 20,      # Базовый таймаут для аудио
+        "image": 10,      # Базовый таймаут для изображений
+        "document": 15,   # Базовый таймаут для документов
+    }
+
+    # Коэффициенты времени обработки (секунды на МБ)
+    processing_rates = {
+        "video": 4,       # ~4 сек/МБ для видео конвертации
+        "audio": 2,       # ~2 сек/МБ для аудио
+        "image": 1,       # ~1 сек/МБ для изображений
+        "document": 0.5,  # ~0.5 сек/МБ для документов
+    }
+
+    base = base_timeouts.get(operation, 30)
+    rate = processing_rates.get(operation, 2)
+
+    # Формула: base + (size_mb * rate) + 10% запас
+    calculated = base + (file_size_mb * rate)
+    timeout = int(calculated * 1.1)
+
+    # Ограничения: минимум 10 сек, максимум 180 сек (3 мин)
+    return max(10, min(timeout, 180))
+
+
 def detect_file_type(filename: str | None = None, mime_type: str | None = None) -> tuple[str | None, str | None]:
-    """
-    Detects file category ('image', 'document', 'audio', 'video') and format name.
-    """
     ext = os.path.splitext(filename)[1].lower().lstrip(".") if filename else ""
 
-    # 1. Check video extension
-    if ext in VIDEO_EXTENSIONS:
-        return "video", VIDEO_EXTENSIONS[ext]
+    # Быстрый поиск по расширению файла
+    EXTENSION_MAP = {
+        **{k: ("video", v) for k, v in VIDEO_EXTENSIONS.items()},
+        **{k: ("audio", v) for k, v in AUDIO_EXTENSIONS.items()},
+        **{k: ("image", v) for k, v in IMAGE_EXTENSIONS.items()},
+        **{k: ("document", v) for k, v in DOCUMENT_EXTENSIONS.items()},
+    }
 
-    # 2. Check audio extension
-    if ext in AUDIO_EXTENSIONS:
-        return "audio", AUDIO_EXTENSIONS[ext]
+    if ext in EXTENSION_MAP:
+        return EXTENSION_MAP[ext]
 
-    # 3. Check image extension
-    if ext in IMAGE_EXTENSIONS:
-        return "image", IMAGE_EXTENSIONS[ext]
+    if not mime_type:
+        return None, None
 
-    # 4. Check document extension
-    if ext in DOCUMENT_EXTENSIONS:
-        return "document", DOCUMENT_EXTENSIONS[ext]
+    mime = mime_type.lower()
 
-    # Check MIME types
-    if mime_type:
-        mime = mime_type.lower()
+    # Определение по MIME-типу с fallback
+    MIME_CATEGORY_MAP = {
+        "video/": ("video", VIDEO_MIME_TYPES, "MP4"),
+        "audio/": ("audio", AUDIO_MIME_TYPES, "MP3"),
+        "image/": ("image", IMAGE_MIME_TYPES, "PNG"),
+    }
 
-        # Video MIME
-        if mime.startswith("video/"):
-            for m_key, f_val in VIDEO_MIME_TYPES.items():
+    # Проверка основных категорий
+    for prefix, (category, mime_dict, default_format) in MIME_CATEGORY_MAP.items():
+        if mime.startswith(prefix):
+            # Точное совпадение
+            if mime in mime_dict:
+                return category, mime_dict[mime]
+            # Поиск частичного совпадения
+            for m_key, f_val in mime_dict.items():
                 if m_key in mime:
-                    return "video", f_val
-            return "video", "MP4"
+                    return category, f_val
+            # Специальные случаи для аудио
+            if category == "audio":
+                if "opus" in mime or "oga" in mime:
+                    return "audio", "OPUS"
+                if "ogg" in mime:
+                    return "audio", "OGG"
+                if "flac" in mime:
+                    return "audio", "FLAC"
+                if "wav" in mime:
+                    return "audio", "WAV"
+            # Специальные случаи для изображений
+            elif category == "image":
+                if "png" in mime:
+                    return "image", "PNG"
+                if "jpeg" in mime or "jpg" in mime:
+                    return "image", "JPG"
+                if "webp" in mime:
+                    return "image", "WEBP"
+            return category, default_format
 
-        # Audio MIME
-        if mime.startswith("audio/"):
-            for m_key, f_val in AUDIO_MIME_TYPES.items():
-                if m_key in mime:
-                    return "audio", f_val
-            if "opus" in mime or "oga" in mime:
-                return "audio", "OPUS"
-            if "ogg" in mime:
-                return "audio", "OGG"
-            if "flac" in mime:
-                return "audio", "FLAC"
-            if "wav" in mime:
-                return "audio", "WAV"
-            return "audio", "MP3"
+    # Проверка документов
+    if mime in DOCUMENT_MIME_TYPES:
+        return "document", DOCUMENT_MIME_TYPES[mime]
 
-        # Image MIME
-        if mime.startswith("image/"):
-            for m_key, f_val in IMAGE_MIME_TYPES.items():
-                if m_key in mime:
-                    return "image", f_val
-            if "png" in mime:
-                return "image", "PNG"
-            if "jpeg" in mime or "jpg" in mime:
-                return "image", "JPG"
-            if "webp" in mime:
-                return "image", "WEBP"
-            return "image", "PNG"
+    # Fallback для документов по ключевым словам
+    DOCUMENT_KEYWORDS = {
+        "wordprocessingml": "DOCX",
+        "json": "JSON",
+        "csv": "CSV",
+        "xml": "XML",
+        "html": "HTML",
+        "text": "TXT",
+    }
 
-        # Document MIME
-        if mime in DOCUMENT_MIME_TYPES:
-            return "document", DOCUMENT_MIME_TYPES[mime]
-        if "wordprocessingml" in mime:
-            return "document", "DOCX"
-        if "json" in mime:
-            return "document", "JSON"
-        if "csv" in mime:
-            return "document", "CSV"
-        if "xml" in mime:
-            return "document", "XML"
-        if "html" in mime:
-            return "document", "HTML"
-        if "text" in mime:
-            return "document", "TXT"
+    for keyword, fmt in DOCUMENT_KEYWORDS.items():
+        if keyword in mime:
+            return "document", fmt
 
     return None, None
 
@@ -328,7 +362,6 @@ def detect_image_format(filename: str | None = None, mime_type: str | None = Non
 
 
 def format_size(size_bytes: int) -> str:
-    """Formats file size into human-readable string."""
     if size_bytes < 1024:
         return f"{size_bytes} Б"
     if size_bytes < 1024 * 1024:
@@ -337,7 +370,6 @@ def format_size(size_bytes: int) -> str:
 
 
 def decode_text(raw_bytes: bytes) -> str:
-    """Safely decodes raw bytes into string trying multiple encodings."""
     for enc in ("utf-8", "utf-8-sig", "cp1251", "latin-1"):
         try:
             return raw_bytes.decode(enc)
@@ -345,16 +377,7 @@ def decode_text(raw_bytes: bytes) -> str:
             continue
     return raw_bytes.decode("utf-8", errors="replace")
 
-
-# ==========================================
-# Video Converter (using FFmpeg)
-# ==========================================
-
 def convert_video(input_bytes: bytes, source_format: str, target_format: str, orig_filename: str | None = None) -> tuple[bytes, str]:
-    """
-    Converts video raw bytes into the requested target format using FFmpeg.
-    Returns (output_bytes, file_extension).
-    """
     src = normalize_format(source_format)
     target = normalize_format(target_format)
 
@@ -376,40 +399,31 @@ def convert_video(input_bytes: bytes, source_format: str, target_format: str, or
     with tempfile.NamedTemporaryFile(suffix=f".{dst_ext}", delete=False) as dst_f:
         dst_path = dst_f.name
 
+    # Вычисляем адаптивный таймаут на основе размера файла
+    timeout = calculate_timeout("video", len(input_bytes))
+
+    VIDEO_ENCODING_PARAMS = {
+        "MP4": ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart"],
+        "MKV": ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-b:a", "96k"],
+        "MOV": ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k"],
+        "AVI": ["-c:v", "mpeg4", "-q:v", "5", "-c:a", "libmp3lame", "-b:a", "96k"],
+        "WEBM": ["-c:v", "libvpx", "-b:v", "600k", "-c:a", "libvorbis", "-q:a", "4"],
+        "GIF": ["-vf", "fps=10,scale=320:-1:flags=lanczos", "-an"],
+        "FLV": ["-c:v", "flv1", "-c:a", "libmp3lame", "-ar", "44100"],
+        "WMV": ["-c:v", "wmv2", "-b:v", "800k", "-c:a", "wmav2", "-b:a", "96k"],
+        "3GP": ["-s", "352x288", "-r", "15", "-c:v", "h263", "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1"],
+        "MPEG": ["-c:v", "mpeg2video", "-c:a", "mp2", "-b:a", "128k"],
+        "TS": ["-c:v", "libx264", "-c:a", "aac", "-b:a", "96k"],
+        "OGV": ["-c:v", "libtheora", "-q:v", "4", "-c:a", "libvorbis"],
+        "MP3": ["-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", "-ac", "2"],
+        "WAV": ["-vn", "-c:a", "pcm_s16le", "-ar", "44100", "-ac", "2"],
+    }
+
     try:
-        cmd = ["ffmpeg", "-y", "-threads", "2", "-i", src_path]
-        if target == "MP4":
-            cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart"])
-        elif target == "MKV":
-            cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-b:a", "96k"])
-        elif target == "MOV":
-            cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k"])
-        elif target == "AVI":
-            cmd.extend(["-c:v", "mpeg4", "-q:v", "5", "-c:a", "libmp3lame", "-b:a", "96k"])
-        elif target == "WEBM":
-            cmd.extend(["-c:v", "libvpx", "-b:v", "600k", "-c:a", "libvorbis", "-q:a", "4"])
-        elif target == "GIF":
-            cmd.extend(["-vf", "fps=10,scale=320:-1:flags=lanczos", "-an"])
-        elif target == "FLV":
-            cmd.extend(["-c:v", "flv1", "-c:a", "libmp3lame", "-ar", "44100"])
-        elif target == "WMV":
-            cmd.extend(["-c:v", "wmv2", "-b:v", "800k", "-c:a", "wmav2", "-b:a", "96k"])
-        elif target == "3GP":
-            cmd.extend(["-s", "352x288", "-r", "15", "-c:v", "h263", "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1"])
-        elif target == "MPEG":
-            cmd.extend(["-c:v", "mpeg2video", "-c:a", "mp2", "-b:a", "128k"])
-        elif target == "TS":
-            cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-b:a", "96k"])
-        elif target == "OGV":
-            cmd.extend(["-c:v", "libtheora", "-q:v", "4", "-c:a", "libvorbis"])
-        elif target == "MP3":
-            cmd.extend(["-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", "-ac", "2"])
-        elif target == "WAV":
-            cmd.extend(["-vn", "-c:a", "pcm_s16le", "-ar", "44100", "-ac", "2"])
+        params = VIDEO_ENCODING_PARAMS.get(target, ["-c:v", "libx264", "-preset", "veryfast"])
+        cmd = ["ffmpeg", "-y", "-threads", "2", "-i", src_path, *params, dst_path]
 
-        cmd.append(dst_path)
-
-        res = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
+        res = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False)
         if res.returncode != 0:
             error_msg = res.stderr.decode("utf-8", errors="replace")
             raise RuntimeError(f"FFmpeg ошибка: {error_msg[-200:]}")
@@ -425,15 +439,7 @@ def convert_video(input_bytes: bytes, source_format: str, target_format: str, or
             os.unlink(dst_path)
 
 
-# ==========================================
-# Audio Converter (using FFmpeg)
-# ==========================================
-
 def convert_audio(input_bytes: bytes, source_format: str, target_format: str, orig_filename: str | None = None) -> tuple[bytes, str]:
-    """
-    Converts audio raw bytes into the requested target format using FFmpeg.
-    Returns (output_bytes, file_extension).
-    """
     src = normalize_format(source_format)
     target = normalize_format(target_format)
 
@@ -455,34 +461,29 @@ def convert_audio(input_bytes: bytes, source_format: str, target_format: str, or
     with tempfile.NamedTemporaryFile(suffix=f".{dst_ext}", delete=False) as dst_f:
         dst_path = dst_f.name
 
+    # Вычисляем адаптивный таймаут на основе размера файла
+    timeout = calculate_timeout("audio", len(input_bytes))
+
+    AUDIO_ENCODING_PARAMS = {
+        "MP3": ["-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", "-ac", "2"],
+        "OPUS": ["-c:a", "libopus", "-b:a", "96k", "-ar", "48000", "-vbr", "on"],
+        "OGG": ["-c:a", "libvorbis", "-q:a", "3", "-ar", "44100"],
+        "FLAC": ["-c:a", "flac", "-ar", "44100"],
+        "AAC": ["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-movflags", "+faststart"],
+        "M4A": ["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-movflags", "+faststart"],
+        "WAV": ["-c:a", "pcm_s16le", "-ar", "44100", "-ac", "2"],
+        "AMR": ["-ar", "8000", "-ac", "1", "-c:a", "libopencore_amrnb"],
+        "AIFF": ["-c:a", "pcm_s16be", "-ar", "44100"],
+        "AC3": ["-c:a", "ac3", "-b:a", "128k", "-ar", "44100"],
+        "MP2": ["-c:a", "mp2", "-b:a", "128k", "-ar", "44100"],
+        "WMA": ["-c:a", "wmav2", "-b:a", "128k", "-ar", "44100"],
+    }
+
     try:
-        cmd = ["ffmpeg", "-y", "-threads", "2", "-i", src_path, "-vn"]
-        if target == "MP3":
-            cmd.extend(["-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", "-ac", "2"])
-        elif target == "OPUS":
-            cmd.extend(["-c:a", "libopus", "-b:a", "96k", "-ar", "48000", "-vbr", "on"])
-        elif target == "OGG":
-            cmd.extend(["-c:a", "libvorbis", "-q:a", "3", "-ar", "44100"])
-        elif target == "FLAC":
-            cmd.extend(["-c:a", "flac", "-ar", "44100"])
-        elif target in ("AAC", "M4A"):
-            cmd.extend(["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-movflags", "+faststart"])
-        elif target == "WAV":
-            cmd.extend(["-c:a", "pcm_s16le", "-ar", "44100", "-ac", "2"])
-        elif target == "AMR":
-            cmd.extend(["-ar", "8000", "-ac", "1", "-c:a", "libopencore_amrnb"])
-        elif target == "AIFF":
-            cmd.extend(["-c:a", "pcm_s16be", "-ar", "44100"])
-        elif target == "AC3":
-            cmd.extend(["-c:a", "ac3", "-b:a", "128k", "-ar", "44100"])
-        elif target == "MP2":
-            cmd.extend(["-c:a", "mp2", "-b:a", "128k", "-ar", "44100"])
-        elif target == "WMA":
-            cmd.extend(["-c:a", "wmav2", "-b:a", "128k", "-ar", "44100"])
+        params = AUDIO_ENCODING_PARAMS.get(target, ["-c:a", "libmp3lame", "-b:a", "128k"])
+        cmd = ["ffmpeg", "-y", "-threads", "2", "-i", src_path, "-vn", *params, dst_path]
 
-        cmd.append(dst_path)
-
-        res = subprocess.run(cmd, capture_output=True, timeout=60, check=False)
+        res = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False)
         if res.returncode != 0:
             error_msg = res.stderr.decode("utf-8", errors="replace")
             raise RuntimeError(f"FFmpeg ошибка: {error_msg[-200:]}")
@@ -497,21 +498,54 @@ def convert_audio(input_bytes: bytes, source_format: str, target_format: str, or
         if os.path.exists(dst_path):
             os.unlink(dst_path)
 
-
-# ==========================================
-# Image Converter
-# ==========================================
-
-def convert_image(input_bytes: bytes, target_format: str) -> tuple[bytes, str]:
+def convert_image(input_bytes: bytes, target_format: str, max_dimension: int = 8192) -> tuple[bytes, str]:
     """
-    Converts image raw bytes into the requested target format.
-    Returns a tuple of (converted_bytes, file_extension).
+    Конвертирует изображение с защитой от OOM.
+
+    Args:
+        input_bytes: входное изображение в байтах
+        target_format: целевой формат (PNG, JPG, WEBP, etc)
+        max_dimension: максимальное измерение (ширина или высота) в пикселях
+
+    Returns:
+        tuple[bytes, str]: (выходные байты, расширение файла)
+
+    Raises:
+        ValueError: если изображение слишком большое для безопасной обработки
     """
     target = normalize_format(target_format)
     if target not in SUPPORTED_IMAGE_FORMATS:
         raise ValueError(f"Неподдерживаемый целевой формат: {target_format}")
 
     with Image.open(io.BytesIO(input_bytes)) as img:
+        width, height = img.size
+
+        # Проверка на слишком большое разрешение
+        if width > max_dimension or height > max_dimension:
+            # Вычисляем коэффициент уменьшения
+            scale = max_dimension / max(width, height)
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+
+            logger.warning(
+                f"Изображение {width}x{height} превышает лимит {max_dimension}px. "
+                f"Уменьшается до {new_width}x{new_height}"
+            )
+
+            # Используем thumbnail для эффективного уменьшения
+            img.thumbnail((new_width, new_height), Image.Resampling.LANCZOS)
+            width, height = img.size
+
+        # Оценка памяти после декодирования (4 bytes per pixel для RGBA)
+        estimated_memory_mb = (width * height * 4) / (1024 * 1024)
+
+        if estimated_memory_mb > 150:  # Больше 150 МБ в памяти
+            raise ValueError(
+                f"Изображение слишком большое для безопасной обработки "
+                f"({width}x{height}, ~{estimated_memory_mb:.0f} МБ в памяти). "
+                f"Максимум: {max_dimension}x{max_dimension} пикселей."
+            )
+
         output_io = io.BytesIO()
         ext = SUPPORTED_IMAGE_FORMATS[target]["ext"]
 
@@ -573,13 +607,7 @@ def convert_image(input_bytes: bytes, target_format: str) -> tuple[bytes, str]:
 
         return output_io.getvalue(), ext
 
-
-# ==========================================
-# Responsive HTML Page Template
-# ==========================================
-
 def _wrap_in_readable_html_template(body_html: str, title: str = "Документ") -> str:
-    """Wraps HTML content in a modern, reader-friendly styling with signature footer."""
     return f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -727,11 +755,6 @@ def _wrap_in_readable_html_template(body_html: str, title: str = "Докумен
 </body>
 </html>"""
 
-
-# ==========================================
-# Structured JSON Converters
-# ==========================================
-
 def _infer_value_type(val: str):
     """Auto-converts string into int, float, bool, or original string."""
     v_clean = val.strip()
@@ -754,7 +777,6 @@ def _infer_value_type(val: str):
 
 
 def text_to_structured_json(text: str) -> str:
-    """Intelligently parses plain text into structured, readable JSON."""
     try:
         parsed = json.loads(text)
         return json.dumps(parsed, ensure_ascii=False, indent=2)
@@ -838,7 +860,6 @@ def text_to_structured_json(text: str) -> str:
 
 
 def markdown_to_structured_json(md_text: str) -> str:
-    """Parses Markdown structure into JSON with headings, sections, lists, and code blocks."""
     lines = md_text.splitlines()
     sections = []
     current_section = {
@@ -918,7 +939,6 @@ def markdown_to_structured_json(md_text: str) -> str:
 
 
 def docx_to_structured_json(docx_bytes: bytes) -> str:
-    """Extracts DOCX content into structured JSON containing headings, paragraphs, and tables."""
     doc = Document(io.BytesIO(docx_bytes))
     headings = []
     paragraphs = []
@@ -963,7 +983,6 @@ def docx_to_structured_json(docx_bytes: bytes) -> str:
 
 
 def csv_to_structured_json(csv_text: str) -> str:
-    """Converts CSV/TSV to typed and structured JSON with table meta."""
     delimiter = "\t" if "\t" in csv_text and "," not in csv_text else (";" if ";" in csv_text and "," not in csv_text else ",")
     reader = csv.DictReader(io.StringIO(csv_text), delimiter=delimiter)
     typed_rows = []
@@ -984,13 +1003,7 @@ def csv_to_structured_json(csv_text: str) -> str:
     }
     return json.dumps(result, ensure_ascii=False, indent=2)
 
-
-# ==========================================
-# Readable HTML Converters
-# ==========================================
-
 def text_to_readable_html(text: str, title: str = "Документ") -> str:
-    """Converts plain text or log into a beautifully formatted, readable HTML webpage."""
     lines = text.splitlines()
     non_empty = [l.strip() for l in lines if l.strip()]
 
@@ -1038,26 +1051,18 @@ def text_to_readable_html(text: str, title: str = "Документ") -> str:
 
 
 def markdown_to_readable_html(md_text: str, title: str = "Документ") -> str:
-    """Converts Markdown to a full-featured styled HTML document."""
     html_body = markdown.markdown(md_text, extensions=['extra', 'tables', 'fenced_code', 'nl2br', 'sane_lists'])
     return _wrap_in_readable_html_template(html_body, title=title)
 
 
 def docx_to_readable_html(docx_bytes: bytes, title: str = "Документ") -> str:
-    """Converts DOCX into a styled readable HTML document."""
     md_text = docx_to_markdown(docx_bytes)
     return markdown_to_readable_html(md_text, title=title)
 
 
 def csv_to_readable_html(csv_text: str, title: str = "Таблица") -> str:
-    """Converts CSV table into an interactive, readable HTML table."""
     md_table = csv_to_markdown(csv_text)
     return markdown_to_readable_html(md_table, title=title)
-
-
-# ==========================================
-# DOCX <-> Markdown Core Handlers
-# ==========================================
 
 def _add_markdown_runs_to_paragraph(paragraph, text: str) -> None:
     pattern = re.compile(r'(`[^`]+`|\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|\*[^*]+\*|___[^_]+___|__[^_]+__|_[^_]+_)')

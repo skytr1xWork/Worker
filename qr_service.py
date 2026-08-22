@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 def generate_qr_image(content: str) -> io.BytesIO:
-    """Generates PNG image bytes of QR code for given text/URL."""
     qr = qrcode.QRCode(
         version=None,
         error_correction=qrcode.constants.ERROR_CORRECT_M,
@@ -30,27 +29,20 @@ def generate_qr_image(content: str) -> io.BytesIO:
 
 
 def read_qr_from_image(image_source: str | io.BytesIO | bytes) -> List[str]:
-    """
-    Decodes QR codes from an image file path, BytesIO, or raw bytes.
-    Returns a list of decoded text strings found in the image.
-    """
     try:
         if isinstance(image_source, bytes):
             image_source = io.BytesIO(image_source)
 
         with Image.open(image_source) as img:
-            # First pass: direct read
             results = zxingcpp.read_barcodes(img)
             if results:
                 return [r.text for r in results if r.text]
 
-            # Second pass: convert to grayscale and try again
             gray_img = img.convert("L")
             results = zxingcpp.read_barcodes(gray_img)
             if results:
                 return [r.text for r in results if r.text]
 
-            # Third pass: high contrast if still not found
             from PIL import ImageEnhance
             enhancer = ImageEnhance.Contrast(gray_img)
             contrast_img = enhancer.enhance(2.0)
