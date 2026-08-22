@@ -210,14 +210,62 @@ def api_restart():
 @app.get("/srvc")
 def system_resources():
     import psutil
+    import os
+    from pathlib import Path
 
+    # Try to read cgroup v2 memory limit (Docker/Kubernetes)
+    cgroup_mem_limit = None
+    cgroup_mem_usage = None
+    try:
+        mem_max_path = Path("/sys/fs/cgroup/memory.max")
+        mem_current_path = Path("/sys/fs/cgroup/memory.current")
+
+        if mem_max_path.exists():
+            mem_max = mem_max_path.read_text().strip()
+            if mem_max != "max":
+                cgroup_mem_limit = int(mem_max)
+
+        if mem_current_path.exists():
+            cgroup_mem_usage = int(mem_current_path.read_text().strip())
+    except Exception:
+        pass
+
+    # Fallback to cgroup v1
+    if cgroup_mem_limit is None:
+        try:
+            mem_limit_path = Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+            mem_usage_path = Path("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+
+            if mem_limit_path.exists():
+                limit = int(mem_limit_path.read_text().strip())
+                # Check if limit is set (not the host max)
+                if limit < (1024**4):  # Less than 1 TB = likely a real limit
+                    cgroup_mem_limit = limit
+
+            if mem_usage_path.exists():
+                cgroup_mem_usage = int(mem_usage_path.read_text().strip())
+        except Exception:
+            pass
+
+    # CPU stats
     cpu_percent = psutil.cpu_percent(interval=0.1)
     cpu_count = psutil.cpu_count(logical=True)
     cpu_freq = psutil.cpu_freq()
 
-    mem = psutil.virtual_memory()
-    swap = psutil.swap_memory()
+    # Memory: use cgroup limits if available, otherwise fallback to psutil
+    if cgroup_mem_limit and cgroup_mem_usage:
+        mem_total = cgroup_mem_limit
+        mem_used = cgroup_mem_usage
+        mem_available = mem_total - mem_used
+        mem_percent = (mem_used / mem_total) * 100 if mem_total > 0 else 0
+    else:
+        mem = psutil.virtual_memory()
+        mem_total = mem.total
+        mem_used = mem.used
+        mem_available = mem.available
+        mem_percent = mem.percent
 
+    swap = psutil.swap_memory()
     disk = psutil.disk_usage('/')
 
     return jsonify({
@@ -227,10 +275,11 @@ def system_resources():
             "freq_mhz": round(cpu_freq.current, 1) if cpu_freq else None,
         },
         "memory": {
-            "total_gb": round(mem.total / (1024**3), 2),
-            "used_gb": round(mem.used / (1024**3), 2),
-            "available_gb": round(mem.available / (1024**3), 2),
-            "percent": round(mem.percent, 1),
+            "total_gb": round(mem_total / (1024**3), 2),
+            "used_gb": round(mem_used / (1024**3), 2),
+            "available_gb": round(mem_available / (1024**3), 2),
+            "percent": round(mem_percent, 1),
+            "is_cgroup_limited": cgroup_mem_limit is not None,
         },
         "swap": {
             "total_gb": round(swap.total / (1024**3), 2),
