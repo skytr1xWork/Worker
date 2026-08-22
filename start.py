@@ -207,6 +207,45 @@ def api_restart():
     })
 
 
+@app.get("/srvc")
+def system_resources():
+    import psutil
+
+    cpu_percent = psutil.cpu_percent(interval=0.1)
+    cpu_count = psutil.cpu_count(logical=True)
+    cpu_freq = psutil.cpu_freq()
+
+    mem = psutil.virtual_memory()
+    swap = psutil.swap_memory()
+
+    disk = psutil.disk_usage('/')
+
+    return jsonify({
+        "cpu": {
+            "percent": round(cpu_percent, 1),
+            "count": cpu_count,
+            "freq_mhz": round(cpu_freq.current, 1) if cpu_freq else None,
+        },
+        "memory": {
+            "total_gb": round(mem.total / (1024**3), 2),
+            "used_gb": round(mem.used / (1024**3), 2),
+            "available_gb": round(mem.available / (1024**3), 2),
+            "percent": round(mem.percent, 1),
+        },
+        "swap": {
+            "total_gb": round(swap.total / (1024**3), 2),
+            "used_gb": round(swap.used / (1024**3), 2),
+            "percent": round(swap.percent, 1),
+        },
+        "disk": {
+            "total_gb": round(disk.total / (1024**3), 2),
+            "used_gb": round(disk.used / (1024**3), 2),
+            "free_gb": round(disk.free / (1024**3), 2),
+            "percent": round(disk.percent, 1),
+        },
+    })
+
+
 @app.get("/favicon.ico")
 def favicon():
     return "", 204
