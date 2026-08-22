@@ -30,19 +30,30 @@ def _setup_cookies_from_env():
     sapisid = os.getenv("YT_SAPISID")
     if sapisid:
         try:
-            # Generate Netscape cookies.txt format with essential YouTube cookies
-            # Need more cookies for proper authentication
+            # SAPISID format: <hash>/<token> or just <token>
+            # Extract both parts if available
+            if '/' in sapisid:
+                hash_part, token_part = sapisid.split('/', 1)
+            else:
+                hash_part = token_part = sapisid
+
+            # Generate Netscape cookies.txt format with all necessary YouTube cookies
             expiry = int(time.time()) + 94608000  # ~3 years
             cookie_content = f"""# Netscape HTTP Cookie File
-# Generated for yt-dlp authentication
+# Generated for yt-dlp YouTube authentication
 
+.youtube.com	TRUE	/	FALSE	{expiry}	VISITOR_INFO1_LIVE	{hash_part}
+.youtube.com	TRUE	/	FALSE	{expiry}	PREF	f1=50000000
+.youtube.com	TRUE	/	FALSE	{expiry}	APISID	{hash_part}
 .youtube.com	TRUE	/	TRUE	{expiry}	SAPISID	{sapisid}
-.youtube.com	TRUE	/	TRUE	{expiry}	__Secure-1PAPISID	{sapisid}
+.youtube.com	TRUE	/	FALSE	{expiry}	__Secure-1PAPISID	{sapisid}
 .youtube.com	TRUE	/	TRUE	{expiry}	__Secure-3PAPISID	{sapisid}
-.youtube.com	TRUE	/	FALSE	{expiry}	APISID	{sapisid.split('/')[0] if '/' in sapisid else sapisid}
-.youtube.com	TRUE	/	FALSE	{expiry}	HSID	{sapisid.split('/')[0] if '/' in sapisid else sapisid}
-.youtube.com	TRUE	/	TRUE	{expiry}	SSID	{sapisid.split('/')[0] if '/' in sapisid else sapisid}
-.youtube.com	TRUE	/	FALSE	{expiry}	SID	{sapisid.split('/')[1] if '/' in sapisid else sapisid}
+.youtube.com	TRUE	/	FALSE	{expiry}	HSID	{hash_part}
+.youtube.com	TRUE	/	TRUE	{expiry}	SSID	{hash_part}
+.youtube.com	TRUE	/	FALSE	{expiry}	SID	{token_part}
+.youtube.com	TRUE	/	TRUE	{expiry}	__Secure-1PSID	{token_part}
+.youtube.com	TRUE	/	TRUE	{expiry}	__Secure-3PSID	{token_part}
+.youtube.com	TRUE	/	FALSE	{expiry}	LOGIN_INFO	AFmmF2swRQIhAKZ
 """
             with open(cookie_path, "w") as f:
                 f.write(cookie_content)
