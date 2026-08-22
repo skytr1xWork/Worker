@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -20,6 +21,50 @@ for p in ("/usr/lib/python3.14/site-packages", "/usr/lib/python3/dist-packages",
 logger = logging.getLogger(__name__)
 
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
+
+# Public Invidious instances for YouTube fallback
+INVIDIOUS_INSTANCES = [
+    "https://inv.nadeko.net",
+    "https://invidious.privacyredirect.com",
+    "https://invidious.fdn.fr",
+    "https://yewtu.be",
+    "https://invidious.lunar.icu",
+]
+
+
+def _fetch_invidious_video_info(video_id: str) -> dict | None:
+    """Fetch video info from Invidious API as fallback for YouTube"""
+    for instance in INVIDIOUS_INSTANCES:
+        try:
+            url = f"{instance}/api/v1/videos/{video_id}"
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                logger.info(f"✓ Invidious API success: {instance}")
+                return data
+        except Exception as e:
+            logger.debug(f"Invidious instance {instance} failed: {e}")
+            continue
+    logger.warning("All Invidious instances failed")
+    return None
+
+
+def _extract_youtube_video_id(url: str) -> str | None:
+    """Extract video ID from YouTube URL"""
+    patterns = [
+        r'(?:v=|/)([0-9A-Za-z_-]{11}).*',
+        r'youtu\.be/([0-9A-Za-z_-]{11})',
+        r'embed/([0-9A-Za-z_-]{11})',
+        r'shorts/([0-9A-Za-z_-]{11})',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
 
 
 def _setup_cookies_from_env():
@@ -500,6 +545,43 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
         raise RuntimeError("Не удалось извлечь изображение по ссылке")
 
     elif target_format == "MP3":
+        # Try Invidious first for YouTube
+        if is_yt:
+            video_id = _extract_youtube_video_id(url)
+            if video_id:
+                inv_data = _fetch_invidious_video_info(video_id)
+                if inv_data and inv_data.get("adaptiveFormats"):
+                    # Find best audio format
+                    audio_formats = [f for f in inv_data["adaptiveFormats"] if f.get("type", "").startswith("audio/")]
+                    if audio_formats:
+                        best_audio = max(audio_formats, key=lambda x: x.get("bitrate", 0))
+                        audio_url = best_audio.get("url")
+
+                        if audio_url:
+                            try:
+                                temp_audio = os.path.join(output_dir, "temp_audio.m4a")
+                                out_mp3 = os.path.join(output_dir, "audio.mp3")
+
+                                # Download audio
+                                req = urllib.request.Request(audio_url, headers={"User-Agent": "Mozilla/5.0"})
+                                with urllib.request.urlopen(req, timeout=60) as resp, open(temp_audio, "wb") as f:
+                                    shutil.copyfileobj(resp, f)
+
+                                # Convert to MP3
+                                subprocess.run([
+                                    "ffmpeg", "-y", "-i", temp_audio,
+                                    "-vn", "-c:a", "libmp3lame", "-b:a", "128k",
+                                    out_mp3
+                                ], capture_output=True, timeout=60, check=False)
+
+                                if os.path.exists(out_mp3) and os.path.getsize(out_mp3) > 0:
+                                    safe_title = re.sub(r'[\\/*?:"<>|]', '', inv_data.get("title", "audio"))[:40].strip() or "audio"
+                                    logger.info(f"✓ Downloaded YouTube audio via Invidious: {safe_title}")
+                                    return out_mp3, "mp3", f"{safe_title}.mp3", os.path.getsize(out_mp3)
+                            except Exception as e:
+                                logger.warning(f"Invidious audio download failed: {e}")
+
+        # Fallback to yt-dlp
         out_template = os.path.join(output_dir, "audio.%(ext)s")
         cmd_audio = _build_ytdlp_audio_cmd(url, out_template, is_yt)
         res = subprocess.run(cmd_audio, capture_output=True, text=True, timeout=90)
@@ -519,6 +601,63 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
         raise RuntimeError(f"Не удалось скачать аудио: {error_msg[-250:]}")
 
     else:
+        # Try Invidious first for YouTube video
+        if is_yt:
+            video_id = _extract_youtube_video_id(url)
+            if video_id:
+                inv_data = _fetch_invidious_video_info(video_id)
+                if inv_data and inv_data.get("adaptiveFormats"):
+                    # Find best video format <= 720p
+                    video_formats = [f for f in inv_data["adaptiveFormats"]
+                                   if f.get("type", "").startswith("video/")
+                                   and f.get("qualityLabel")
+                                   and "720" in f.get("qualityLabel", "")]
+
+                    if not video_formats:
+                        # Fallback to any video format
+                        video_formats = [f for f in inv_data["adaptiveFormats"] if f.get("type", "").startswith("video/")]
+
+                    # Get best audio
+                    audio_formats = [f for f in inv_data["adaptiveFormats"] if f.get("type", "").startswith("audio/")]
+
+                    if video_formats and audio_formats:
+                        best_video = max(video_formats, key=lambda x: x.get("bitrate", 0))
+                        best_audio = max(audio_formats, key=lambda x: x.get("bitrate", 0))
+
+                        video_url = best_video.get("url")
+                        audio_url = best_audio.get("url")
+
+                        if video_url and audio_url:
+                            try:
+                                temp_video = os.path.join(output_dir, "temp_video.mp4")
+                                temp_audio = os.path.join(output_dir, "temp_audio.m4a")
+                                final_mp4 = os.path.join(output_dir, "final.mp4")
+
+                                # Download video and audio
+                                req_v = urllib.request.Request(video_url, headers={"User-Agent": "Mozilla/5.0"})
+                                with urllib.request.urlopen(req_v, timeout=90) as resp, open(temp_video, "wb") as f:
+                                    shutil.copyfileobj(resp, f)
+
+                                req_a = urllib.request.Request(audio_url, headers={"User-Agent": "Mozilla/5.0"})
+                                with urllib.request.urlopen(req_a, timeout=60) as resp, open(temp_audio, "wb") as f:
+                                    shutil.copyfileobj(resp, f)
+
+                                # Merge video and audio
+                                subprocess.run([
+                                    "ffmpeg", "-y", "-i", temp_video, "-i", temp_audio,
+                                    "-c", "copy",
+                                    "-movflags", "+faststart",
+                                    final_mp4
+                                ], capture_output=True, timeout=60, check=False)
+
+                                if os.path.exists(final_mp4) and os.path.getsize(final_mp4) > 0:
+                                    safe_title = re.sub(r'[\\/*?:"<>|]', '', inv_data.get("title", "video"))[:40].strip() or "video"
+                                    logger.info(f"✓ Downloaded YouTube video via Invidious: {safe_title}")
+                                    return final_mp4, "mp4", f"{safe_title}.mp4", os.path.getsize(final_mp4)
+                            except Exception as e:
+                                logger.warning(f"Invidious video download failed: {e}")
+
+        # Fallback to yt-dlp
         out_template = os.path.join(output_dir, "video.%(ext)s")
         cmd_video = _build_ytdlp_video_cmd(url, out_template, is_yt)
         res = subprocess.run(cmd_video, capture_output=True, text=True, timeout=120)
