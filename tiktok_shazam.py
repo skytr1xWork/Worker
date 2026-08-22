@@ -20,13 +20,11 @@ logger = logging.getLogger(__name__)
 
 DATA_URI_PREFIX = "data:audio/vnd.shazam.sig;base64,"
 
-# Ленивая загрузка numpy для экономии памяти (~100 МБ)
 _numpy_module = None
 _hanning_matrix = None
 
 
 def _get_numpy():
-    """Ленивая загрузка numpy - загружается только при первом использовании Shazam."""
     global _numpy_module
     if _numpy_module is None:
         import numpy as np
@@ -35,7 +33,6 @@ def _get_numpy():
 
 
 def _get_hanning_matrix():
-    """Ленивая загрузка HANNING_MATRIX - создается только при первом использовании."""
     global _hanning_matrix
     if _hanning_matrix is None:
         np = _get_numpy()
@@ -134,33 +131,21 @@ class DecodedMessage:
 
 
 class RingBuffer(list):
-    """
-    Кольцевой буфер с оптимизированным хранением.
-    Использует array.array для numpy массивов для экономии памяти (~50% меньше).
-    """
     def __init__(self, buffer_size: int, default_value=0):
-        # Проверяем тип default_value
         if hasattr(default_value, '__len__') and hasattr(default_value, 'dtype'):
-            # Это numpy массив - импортируем array для оптимизации
             from array import array
-            # Конвертируем numpy массив в list array для каждого элемента
-            # array('d') использует double (8 bytes) для совместимости с numpy float64
             super().__init__([array('d', default_value.tolist()) if hasattr(default_value, 'tolist') else default_value for _ in range(buffer_size)])
         elif hasattr(default_value, '__iter__') and not isinstance(default_value, str):
-            # Если это список или другой итерируемый объект
             from array import array
             super().__init__([array('d', default_value) for _ in range(buffer_size)])
         else:
-            # Для скаляров - как раньше
             super().__init__([default_value] * buffer_size)
         self.position: int = 0
         self.buffer_size: int = buffer_size
         self.num_written: int = 0
 
     def append(self, value):
-        """Добавляет значение в буфер с поддержкой numpy массивов."""
         if hasattr(value, 'tolist'):
-            # Конвертируем numpy массив в array.array для экономии памяти
             from array import array
             self[self.position] = array('d', value.tolist())
         else:
@@ -169,9 +154,7 @@ class RingBuffer(list):
         self.num_written += 1
 
     def __getitem__(self, idx):
-        """Получает элемент с автоконвертацией array.array обратно в numpy."""
         item = super().__getitem__(idx)
-        # Если это array.array, конвертируем обратно в numpy для операций
         if hasattr(item, 'typecode') and item.typecode == 'd':
             np = _get_numpy()
             return np.array(item)
@@ -181,7 +164,6 @@ class RingBuffer(list):
 class SignatureGenerator:
     def __init__(self):
         self.ring_buffer_of_samples = RingBuffer(buffer_size=2048, default_value=0)
-        # Ленивая инициализация numpy массивов - создаются при первом использовании
         np = _get_numpy()
         self.fft_outputs = RingBuffer(buffer_size=256, default_value=np.zeros(1025))
         self.spread_fft_output = RingBuffer(buffer_size=256, default_value=np.zeros(1025))
@@ -275,7 +257,6 @@ class SignatureGenerator:
                         corrected_bin = bin_pos * 64 + var2
                         freq_hz = corrected_bin * (16000 / 2 / 1024 / 64)
 
-                        # Быстрое определение частотного диапазона через границы
                         if not (250 < freq_hz <= 5500):
                             continue
 
@@ -302,7 +283,6 @@ class SignatureGenerator:
 
 
 def create_signature_from_pcm(raw_pcm_s16le: bytes) -> str:
-    """Generates Shazam Data-URI signature from raw 16kHz 16-bit mono PCM bytes."""
     num_samples = len(raw_pcm_s16le) // 2
     samples = struct.unpack(f"<{num_samples}h", raw_pcm_s16le[: num_samples * 2])
 
@@ -312,7 +292,6 @@ def create_signature_from_pcm(raw_pcm_s16le: bytes) -> str:
 
 
 def query_shazam_api(signature_uri: str) -> dict | None:
-    """Sends signature to Shazam API and returns parsed response."""
     device_id = str(uuid.uuid4()).upper()
     tag_id = str(uuid.uuid4()).upper()
     api_url = f"https://amp.shazam.com/discovery/v5/ru/RU/android/-/tag/{device_id}/{tag_id}?sync=true"
@@ -384,15 +363,11 @@ def query_shazam_api(signature_uri: str) -> dict | None:
 
 
 def extract_audio_pcm_from_url(url: str) -> Optional[bytes]:
-    """
-    Downloads up to 10 seconds of audio from a URL and converts to 16kHz mono raw s16le PCM.
-    """
     from url_converter import get_ytdlp_cmd
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_audio = os.path.join(tmp_dir, "snippet.mp3")
 
-        # 1. Download snippet using yt-dlp
         cmd = get_ytdlp_cmd() + [
             "--no-check-certificates",
             "--geo-bypass",
@@ -410,7 +385,6 @@ def extract_audio_pcm_from_url(url: str) -> Optional[bytes]:
         ]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=40)
         if not (res.returncode == 0 and os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 0):
-            # Fallback without --download-sections
             fallback_cmd = get_ytdlp_cmd() + [
                 "--no-check-certificates",
                 "--geo-bypass",
@@ -429,7 +403,6 @@ def extract_audio_pcm_from_url(url: str) -> Optional[bytes]:
             if not (res2.returncode == 0 and os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 0):
                 return None
 
-        # 2. Convert to raw 16kHz mono 16-bit PCM using ffmpeg
         ffmpeg_cmd = [
             "ffmpeg",
             "-y",
@@ -448,10 +421,6 @@ def extract_audio_pcm_from_url(url: str) -> Optional[bytes]:
 
 
 async def shazam_tiktok_url(url: str) -> dict | None:
-    """
-    Downloads audio from a TikTok link and identifies the song via Shazam API.
-    100% pure Python + numpy + ffmpeg, without C++/Rust build dependencies.
-    """
     pcm_data = await asyncio.to_thread(extract_audio_pcm_from_url, url)
     if not pcm_data:
         return None

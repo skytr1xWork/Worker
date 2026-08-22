@@ -13,25 +13,16 @@ import time
 import urllib.request
 from PIL import Image
 
-# Ensure system package path is included if running in custom venv
 for p in ("/usr/lib/python3.14/site-packages", "/usr/lib/python3/dist-packages", "/usr/local/lib/python3.14/dist-packages"):
     if os.path.isdir(p) and p not in sys.path:
         sys.path.append(p)
 
 logger = logging.getLogger(__name__)
 
-# Global semaphore: allow 2 concurrent downloads with optimized memory usage
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
 
 
 def ttl_lru_cache(ttl_seconds=300, maxsize=128):
-    """
-    LRU кэш с TTL (Time To Live) для кэширования результатов с автоматической очисткой.
-
-    Args:
-        ttl_seconds: время жизни записи в кэше (по умолчанию 300 сек = 5 мин)
-        maxsize: максимальное количество записей в кэше
-    """
     def decorator(func):
         cache = {}
         cache_times = {}
@@ -39,26 +30,21 @@ def ttl_lru_cache(ttl_seconds=300, maxsize=128):
         def wrapper(url: str):
             current_time = time.time()
 
-            # Проверяем кэш
             if url in cache:
                 if current_time - cache_times[url] < ttl_seconds:
                     logger.debug(f"Pinterest cache HIT: {url}")
                     return cache[url]
                 else:
-                    # Устаревшая запись
                     logger.debug(f"Pinterest cache EXPIRED: {url}")
                     del cache[url]
                     del cache_times[url]
 
-            # Вызываем функцию
             logger.debug(f"Pinterest cache MISS: {url}")
             result = func(url)
 
-            # Сохраняем в кэш
             cache[url] = result
             cache_times[url] = current_time
 
-            # Ограничение размера кэша
             if len(cache) > maxsize:
                 oldest = min(cache_times.items(), key=lambda x: x[1])[0]
                 logger.debug(f"Pinterest cache EVICT: {oldest}")
@@ -67,7 +53,6 @@ def ttl_lru_cache(ttl_seconds=300, maxsize=128):
 
             return result
 
-        # Добавляем методы для управления кэшем
         wrapper.cache_clear = lambda: (cache.clear(), cache_times.clear())
         wrapper.cache_info = lambda: {
             "size": len(cache),
@@ -125,7 +110,6 @@ SUPPORTED_SERVICES = {
 
 
 def get_ytdlp_cmd() -> list[str]:
-    """Dynamically finds the best command to execute yt-dlp across all environments."""
     which_path = shutil.which("yt-dlp")
     if which_path:
         return [which_path]
@@ -143,7 +127,6 @@ def get_ytdlp_cmd() -> list[str]:
 
 
 def get_common_ytdlp_args(is_youtube: bool = False) -> list[str]:
-    """Returns low-memory extractor args and spoofing headers that bypass bot checks on cloud servers."""
     args = [
         "--no-check-certificates",
         "--geo-bypass",
@@ -159,10 +142,6 @@ def get_common_ytdlp_args(is_youtube: bool = False) -> list[str]:
 
 
 def detect_service(url: str) -> tuple[str | None, str | None]:
-    """
-    Detects if the URL belongs to a supported service.
-    Returns (service_key, service_display_name).
-    """
     clean_url = url.strip()
     for s_key, s_info in SUPPORTED_SERVICES.items():
         for pat in s_info["patterns"]:
@@ -172,19 +151,12 @@ def detect_service(url: str) -> tuple[str | None, str | None]:
 
 
 def extract_first_url(text: str) -> str | None:
-    """Extracts first HTTP/HTTPS link from message text."""
     match = re.search(r'https?://[^\s<>"]+', text)
     return match.group(0) if match else None
 
 
 @ttl_lru_cache(ttl_seconds=300, maxsize=128)
 def _get_pinterest_media(url: str) -> dict:
-    """
-    Directly extracts direct video and image URLs from Pinterest pin page with gzip support.
-    Returns dict with keys: video_url, image_url, title.
-
-    Кэшируется на 5 минут для устранения дублирования HTTP запросов.
-    """
     try:
         import gzip
         req = urllib.request.Request(
@@ -202,17 +174,14 @@ def _get_pinterest_media(url: str) -> dict:
                 raw_data = resp.read()
             html = raw_data.decode("utf-8", errors="replace")
 
-        # 1. Video URLs
         videos = re.findall(r'https://v1\.pinimg\.com/videos/[a-zA-Z0-9._/\-]+\.(?:mp4|m3u8)', html)
         mp4_videos = [v for v in videos if v.endswith('.mp4')]
         video_url = mp4_videos[0] if mp4_videos else (videos[0] if videos else None)
 
-        # 2. Image URLs
         images = re.findall(r'https://i\.pinimg\.com/(?:originals|[0-9]+x)/[a-zA-Z0-9/_.\-]+\.(?:jpg|png|webp)', html)
         orig_images = [img for img in images if '/originals/' in img]
         image_url = orig_images[0] if orig_images else (images[0] if images else None)
 
-        # 3. Title
         title_m = re.search(r'<title>([^<]+)</title>', html)
         title = title_m.group(1).replace(' | Pinterest', '').strip() if title_m else "Pinterest Pin"
 
@@ -231,12 +200,8 @@ def _get_pinterest_media(url: str) -> dict:
 
 
 def get_url_metadata(url: str) -> dict:
-    """
-    Extracts title, duration, thumbnail from the URL with fallback.
-    """
     is_yt = "youtube" in url or "youtu.be" in url
 
-    # Pinterest direct metadata
     if "pinterest" in url or "pin.it" in url:
         p_media = _get_pinterest_media(url)
         return {
@@ -277,7 +242,6 @@ def get_url_metadata(url: str) -> dict:
 
 
 def _build_ytdlp_audio_cmd(url: str, output_template: str, is_youtube: bool) -> list[str]:
-    """Строит команду yt-dlp для скачивания аудио."""
     base = get_ytdlp_cmd() + get_common_ytdlp_args(is_youtube=is_youtube)
     format_arg = ["-f", "ba/b/best"] if is_youtube else ["-f", "bestaudio/best"]
     return base + format_arg + [
@@ -291,7 +255,6 @@ def _build_ytdlp_audio_cmd(url: str, output_template: str, is_youtube: bool) -> 
 
 
 def _build_ytdlp_video_cmd(url: str, output_template: str, is_youtube: bool) -> list[str]:
-    """Строит команду yt-dlp для скачивания видео."""
     base = get_ytdlp_cmd() + get_common_ytdlp_args(is_youtube=is_youtube)
 
     if is_youtube:
@@ -309,7 +272,6 @@ def _build_ytdlp_video_cmd(url: str, output_template: str, is_youtube: bool) -> 
 
 
 def _build_ytdlp_fallback_cmd(url: str, output_template: str, is_youtube: bool, media_type: str) -> list[str]:
-    """Строит fallback команду yt-dlp при первичной неудаче."""
     if media_type == "audio":
         if is_youtube:
             return get_ytdlp_cmd() + [
@@ -347,18 +309,11 @@ def _build_ytdlp_fallback_cmd(url: str, output_template: str, is_youtube: bool, 
 
 
 def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple[str, str, str, int]:
-    """
-    Downloads media directly to disk with strict low-RAM memory limits.
-    Returns (final_file_path, file_extension, filename_title, file_size_bytes).
-    """
     fmt = target_format.upper().strip()
     target_format = fmt
     is_yt = "youtube" in url or "youtu.be" in url
     is_pin = "pinterest" in url or "pin.it" in url
 
-    # -------------------------------------------------------------
-    # PINTEREST DIRECT PIPELINE (Ultra-fast, zero yt-dlp format errors)
-    # -------------------------------------------------------------
     if is_pin:
         p_media = _get_pinterest_media(url)
         video_url = p_media.get("video_url")
@@ -385,7 +340,6 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
                     shutil.copyfileobj(resp, f)
                 return out_mp4, "mp4", f"{safe_title}.mp4", os.path.getsize(out_mp4)
             elif image_url:
-                # User asked for MP4 on an image pin: create short 3s MP4 clip from image
                 img_temp = os.path.join(output_dir, "temp_img.jpg")
                 out_mp4 = os.path.join(output_dir, f"{safe_title}.mp4")
                 req = urllib.request.Request(image_url, headers={"User-Agent": "Mozilla/5.0"})
@@ -422,16 +376,11 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
                     return out_mp3, "mp3", f"{safe_title}.mp3", os.path.getsize(out_mp3)
             raise RuntimeError("В этом пине нет аудиодорожки.")
 
-    # -------------------------------------------------------------
-    # YOUTUBE, TIKTOK, VK, DZEN PIPELINE (yt-dlp)
-    # -------------------------------------------------------------
     ytdlp_base = get_ytdlp_cmd() + get_common_ytdlp_args(is_youtube=is_yt)
 
-    # Case 1: Download PNG thumbnail or image
     if target_format == "PNG":
         out_png = os.path.join(output_dir, "output.png")
 
-        # yt-dlp thumbnail
         thumb_template = os.path.join(output_dir, "thumb.%(ext)s")
         cmd_thumb = ytdlp_base + [
             "--write-thumbnail",
@@ -453,7 +402,6 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
             except Exception:
                 pass
 
-        # Fallback from metadata thumbnail
         meta = get_url_metadata(url)
         if meta.get("thumbnail"):
             req = urllib.request.Request(
@@ -468,13 +416,11 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
 
         raise RuntimeError("Не удалось извлечь изображение по ссылке")
 
-    # Case 2: Download MP3 Audio
     elif target_format == "MP3":
         out_template = os.path.join(output_dir, "audio.%(ext)s")
         cmd_audio = _build_ytdlp_audio_cmd(url, out_template, is_yt)
         res = subprocess.run(cmd_audio, capture_output=True, text=True, timeout=90)
 
-        # Fallback if first attempt failed on YouTube
         if res.returncode != 0 and is_yt:
             cmd_fallback = _build_ytdlp_fallback_cmd(url, out_template, is_yt, "audio")
             res = subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=90)
@@ -489,13 +435,11 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
         error_msg = res.stderr.strip() if res.stderr else "Неизвестная ошибка"
         raise RuntimeError(f"Не удалось скачать аудио: {error_msg[-250:]}")
 
-    # Case 3: Download MP4 Video
     else:
         out_template = os.path.join(output_dir, "video.%(ext)s")
         cmd_video = _build_ytdlp_video_cmd(url, out_template, is_yt)
         res = subprocess.run(cmd_video, capture_output=True, text=True, timeout=120)
 
-        # Fallback if first attempt failed
         if res.returncode != 0:
             cmd_fallback = _build_ytdlp_fallback_cmd(url, out_template, is_yt, "video")
             res = subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=120)
@@ -512,8 +456,6 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
 
         final_mp4 = os.path.join(output_dir, "final.mp4")
 
-        # Low-RAM MP4 faststart / transcode:
-        # 1. First try stream copy with faststart (takes 0 CPU, < 5MB RAM)
         cp_res = subprocess.run([
             "ffmpeg", "-y", "-i", raw_video_path,
             "-c", "copy",
@@ -521,7 +463,6 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
             final_mp4
         ], capture_output=True, timeout=30, check=False)
 
-        # 2. If stream copy failed (e.g. non-mp4 codec), do lightweight transcode with 2 threads
         if cp_res.returncode != 0 or not os.path.exists(final_mp4) or os.path.getsize(final_mp4) == 0:
             subprocess.run([
                 "ffmpeg", "-y", "-i", raw_video_path,
@@ -540,7 +481,6 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
 
 
 def download_url_media(url: str, target_format: str) -> tuple[bytes, str, str]:
-    """Compatibility wrapper that reads bytes (used if needed)."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         path, ext, title, _ = download_url_to_file(url, target_format, tmp_dir)
         with open(path, "rb") as f:

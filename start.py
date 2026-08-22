@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 
 from flask import Flask, jsonify, render_template, request
 
-# setup
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -201,7 +200,6 @@ def api_status():
 
 @app.route("/api/restart", methods=["GET", "POST"])
 def api_restart():
-    """Trigger manual bot restart."""
     supervisor.trigger_restart()
     return jsonify({
         "ok": True,

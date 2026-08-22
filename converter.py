@@ -208,7 +208,6 @@ VIDEO_MIME_TYPES = {
 
 
 def normalize_format(fmt: str) -> str:
-    """Normalizes format string to standard uppercase key."""
     if not fmt:
         return ""
     cleaned = fmt.upper().strip().lstrip(".")
@@ -234,55 +233,34 @@ def normalize_format(fmt: str) -> str:
 
 
 def calculate_timeout(operation: str, file_size_bytes: int) -> int:
-    """
-    Вычисляет оптимальный таймаут на основе операции и размера файла.
-
-    Args:
-        operation: тип операции ("video", "audio", "image", "document")
-        file_size_bytes: размер входного файла в байтах
-
-    Returns:
-        Таймаут в секундах (минимум 10, максимум 180)
-
-    Примеры:
-        1 МБ видео → 34 сек
-        5 МБ видео → 52 сек
-        20 МБ видео → 118 сек
-        1 МБ аудио → 24 сек
-    """
     file_size_mb = file_size_bytes / (1024 * 1024)
 
-    # Базовые таймауты для разных типов операций
     base_timeouts = {
-        "video": 30,      # Базовый таймаут для видео
-        "audio": 20,      # Базовый таймаут для аудио
-        "image": 10,      # Базовый таймаут для изображений
-        "document": 15,   # Базовый таймаут для документов
+        "video": 30,
+        "audio": 20,
+        "image": 10,
+        "document": 15,
     }
 
-    # Коэффициенты времени обработки (секунды на МБ)
     processing_rates = {
-        "video": 4,       # ~4 сек/МБ для видео конвертации
-        "audio": 2,       # ~2 сек/МБ для аудио
-        "image": 1,       # ~1 сек/МБ для изображений
-        "document": 0.5,  # ~0.5 сек/МБ для документов
+        "video": 4,
+        "audio": 2,
+        "image": 1,
+        "document": 0.5,
     }
 
     base = base_timeouts.get(operation, 30)
     rate = processing_rates.get(operation, 2)
 
-    # Формула: base + (size_mb * rate) + 10% запас
     calculated = base + (file_size_mb * rate)
     timeout = int(calculated * 1.1)
 
-    # Ограничения: минимум 10 сек, максимум 180 сек (3 мин)
     return max(10, min(timeout, 180))
 
 
 def detect_file_type(filename: str | None = None, mime_type: str | None = None) -> tuple[str | None, str | None]:
     ext = os.path.splitext(filename)[1].lower().lstrip(".") if filename else ""
 
-    # Быстрый поиск по расширению файла
     EXTENSION_MAP = {
         **{k: ("video", v) for k, v in VIDEO_EXTENSIONS.items()},
         **{k: ("audio", v) for k, v in AUDIO_EXTENSIONS.items()},
@@ -298,24 +276,19 @@ def detect_file_type(filename: str | None = None, mime_type: str | None = None) 
 
     mime = mime_type.lower()
 
-    # Определение по MIME-типу с fallback
     MIME_CATEGORY_MAP = {
         "video/": ("video", VIDEO_MIME_TYPES, "MP4"),
         "audio/": ("audio", AUDIO_MIME_TYPES, "MP3"),
         "image/": ("image", IMAGE_MIME_TYPES, "PNG"),
     }
 
-    # Проверка основных категорий
     for prefix, (category, mime_dict, default_format) in MIME_CATEGORY_MAP.items():
         if mime.startswith(prefix):
-            # Точное совпадение
             if mime in mime_dict:
                 return category, mime_dict[mime]
-            # Поиск частичного совпадения
             for m_key, f_val in mime_dict.items():
                 if m_key in mime:
                     return category, f_val
-            # Специальные случаи для аудио
             if category == "audio":
                 if "opus" in mime or "oga" in mime:
                     return "audio", "OPUS"
@@ -325,7 +298,6 @@ def detect_file_type(filename: str | None = None, mime_type: str | None = None) 
                     return "audio", "FLAC"
                 if "wav" in mime:
                     return "audio", "WAV"
-            # Специальные случаи для изображений
             elif category == "image":
                 if "png" in mime:
                     return "image", "PNG"
@@ -335,11 +307,9 @@ def detect_file_type(filename: str | None = None, mime_type: str | None = None) 
                     return "image", "WEBP"
             return category, default_format
 
-    # Проверка документов
     if mime in DOCUMENT_MIME_TYPES:
         return "document", DOCUMENT_MIME_TYPES[mime]
 
-    # Fallback для документов по ключевым словам
     DOCUMENT_KEYWORDS = {
         "wordprocessingml": "DOCX",
         "json": "JSON",
@@ -399,7 +369,6 @@ def convert_video(input_bytes: bytes, source_format: str, target_format: str, or
     with tempfile.NamedTemporaryFile(suffix=f".{dst_ext}", delete=False) as dst_f:
         dst_path = dst_f.name
 
-    # Вычисляем адаптивный таймаут на основе размера файла
     timeout = calculate_timeout("video", len(input_bytes))
 
     VIDEO_ENCODING_PARAMS = {
@@ -461,7 +430,6 @@ def convert_audio(input_bytes: bytes, source_format: str, target_format: str, or
     with tempfile.NamedTemporaryFile(suffix=f".{dst_ext}", delete=False) as dst_f:
         dst_path = dst_f.name
 
-    # Вычисляем адаптивный таймаут на основе размера файла
     timeout = calculate_timeout("audio", len(input_bytes))
 
     AUDIO_ENCODING_PARAMS = {
@@ -499,20 +467,6 @@ def convert_audio(input_bytes: bytes, source_format: str, target_format: str, or
             os.unlink(dst_path)
 
 def convert_image(input_bytes: bytes, target_format: str, max_dimension: int = 8192) -> tuple[bytes, str]:
-    """
-    Конвертирует изображение с защитой от OOM.
-
-    Args:
-        input_bytes: входное изображение в байтах
-        target_format: целевой формат (PNG, JPG, WEBP, etc)
-        max_dimension: максимальное измерение (ширина или высота) в пикселях
-
-    Returns:
-        tuple[bytes, str]: (выходные байты, расширение файла)
-
-    Raises:
-        ValueError: если изображение слишком большое для безопасной обработки
-    """
     target = normalize_format(target_format)
     if target not in SUPPORTED_IMAGE_FORMATS:
         raise ValueError(f"Неподдерживаемый целевой формат: {target_format}")
@@ -520,9 +474,7 @@ def convert_image(input_bytes: bytes, target_format: str, max_dimension: int = 8
     with Image.open(io.BytesIO(input_bytes)) as img:
         width, height = img.size
 
-        # Проверка на слишком большое разрешение
         if width > max_dimension or height > max_dimension:
-            # Вычисляем коэффициент уменьшения
             scale = max_dimension / max(width, height)
             new_width = int(width * scale)
             new_height = int(height * scale)
@@ -532,14 +484,12 @@ def convert_image(input_bytes: bytes, target_format: str, max_dimension: int = 8
                 f"Уменьшается до {new_width}x{new_height}"
             )
 
-            # Используем thumbnail для эффективного уменьшения
             img.thumbnail((new_width, new_height), Image.Resampling.LANCZOS)
             width, height = img.size
 
-        # Оценка памяти после декодирования (4 bytes per pixel для RGBA)
         estimated_memory_mb = (width * height * 4) / (1024 * 1024)
 
-        if estimated_memory_mb > 150:  # Больше 150 МБ в памяти
+        if estimated_memory_mb > 150:
             raise ValueError(
                 f"Изображение слишком большое для безопасной обработки "
                 f"({width}x{height}, ~{estimated_memory_mb:.0f} МБ в памяти). "
@@ -756,7 +706,6 @@ def _wrap_in_readable_html_template(body_html: str, title: str = "Докумен
 </html>"""
 
 def _infer_value_type(val: str):
-    """Auto-converts string into int, float, bool, or original string."""
     v_clean = val.strip()
     if v_clean.lower() == "true":
         return True
@@ -1091,7 +1040,6 @@ def _add_markdown_runs_to_paragraph(paragraph, text: str) -> None:
 
 
 def markdown_to_docx(md_text: str) -> bytes:
-    """Converts Markdown text into a styled DOCX document."""
     doc = Document()
     lines = md_text.splitlines()
     in_code_block = False
@@ -1141,7 +1089,6 @@ def markdown_to_docx(md_text: str) -> bytes:
 
 
 def docx_to_markdown(docx_bytes: bytes) -> str:
-    """Converts a DOCX document into Markdown string."""
     doc = Document(io.BytesIO(docx_bytes))
     md_parts = []
 
@@ -1197,7 +1144,6 @@ def docx_to_markdown(docx_bytes: bytes) -> str:
 
 
 def docx_to_text(docx_bytes: bytes) -> str:
-    """Extracts plain text from DOCX."""
     doc = Document(io.BytesIO(docx_bytes))
     lines = []
     for p in doc.paragraphs:
@@ -1209,7 +1155,6 @@ def docx_to_text(docx_bytes: bytes) -> str:
 
 
 def text_to_docx(text: str) -> bytes:
-    """Converts plain text to DOCX."""
     doc = Document()
     for line in text.splitlines():
         doc.add_paragraph(line)
@@ -1219,7 +1164,6 @@ def text_to_docx(text: str) -> bytes:
 
 
 def html_to_markdown(html_text: str) -> str:
-    """HTML to Markdown converter."""
     text = re.sub(r'<h1[^>]*>(.*?)</h1>', r'# \1\n\n', html_text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r'<h2[^>]*>(.*?)</h2>', r'## \1\n\n', text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r'<h3[^>]*>(.*?)</h3>', r'### \1\n\n', text, flags=re.DOTALL | re.IGNORECASE)
@@ -1235,7 +1179,6 @@ def html_to_markdown(html_text: str) -> str:
 
 
 def html_to_text(html_text: str) -> str:
-    """Strips HTML tags and extracts text."""
     clean = re.sub(r'<br\s*/?>', '\n', html_text, flags=re.IGNORECASE)
     clean = re.sub(r'</p>', '\n\n', clean, flags=re.IGNORECASE)
     clean = re.sub(r'</h1>|</h2>|</h3>|</h4>', '\n\n', clean, flags=re.IGNORECASE)
@@ -1245,7 +1188,6 @@ def html_to_text(html_text: str) -> str:
 
 
 def json_to_csv(text: str) -> str:
-    """Converts JSON to CSV string."""
     data = json.loads(text)
     out = io.StringIO()
     if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
@@ -1275,7 +1217,6 @@ def json_to_csv(text: str) -> str:
 
 
 def csv_to_markdown(text: str) -> str:
-    """Converts CSV to Markdown table."""
     delimiter = "\t" if "\t" in text and "," not in text else (";" if ";" in text and "," not in text else ",")
     reader = list(csv.reader(io.StringIO(text), delimiter=delimiter))
     if not reader:
@@ -1293,7 +1234,6 @@ def csv_to_markdown(text: str) -> str:
 
 
 def csv_to_docx(text: str) -> bytes:
-    """Converts CSV table to Word DOCX document."""
     delimiter = "\t" if "\t" in text and "," not in text else (";" if ";" in text and "," not in text else ",")
     reader = list(csv.reader(io.StringIO(text), delimiter=delimiter))
     doc = Document()
@@ -1317,19 +1257,10 @@ def csv_to_docx(text: str) -> bytes:
     return out_io.getvalue()
 
 
-# ==========================================
-# Main Document Converter Router
-# ==========================================
-
 def convert_document(input_bytes: bytes, source_format: str, target_format: str) -> tuple[bytes, str]:
-    """
-    Converts document or text between formats.
-    Returns (output_bytes, file_extension).
-    """
     src = normalize_format(source_format)
     target = normalize_format(target_format)
 
-    # 1. DOCX source
     if src == "DOCX":
         if target == "MD":
             md_str = docx_to_markdown(input_bytes)
@@ -1349,10 +1280,8 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
             ext = SUPPORTED_DOCUMENT_FORMATS.get(target, {}).get("ext", target.lower())
             return txt_str.encode("utf-8"), ext
 
-    # Non-DOCX source: decode text
     text_content = decode_text(input_bytes)
 
-    # 2. Target JSON
     if target == "JSON":
         if src == "MD":
             json_str = markdown_to_structured_json(text_content)
@@ -1362,7 +1291,6 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
             json_str = text_to_structured_json(text_content)
         return json_str.encode("utf-8"), "json"
 
-    # 3. Target HTML
     if target == "HTML":
         if src == "MD":
             html_str = markdown_to_readable_html(text_content)
@@ -1379,7 +1307,6 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
             html_str = text_to_readable_html(text_content)
         return html_str.encode("utf-8"), "html"
 
-    # 4. Target DOCX
     if target == "DOCX":
         if src == "MD":
             return markdown_to_docx(text_content), "docx"
@@ -1391,13 +1318,11 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
         else:
             return text_to_docx(text_content), "docx"
 
-    # 5. MD as source
     if src == "MD":
         if target in ("TXT", "DAT", "LOG"):
             ext = SUPPORTED_DOCUMENT_FORMATS[target]["ext"]
             return text_content.encode("utf-8"), ext
 
-    # 6. Target MD
     if target == "MD":
         if src in ("CSV", "TSV"):
             return csv_to_markdown(text_content).encode("utf-8"), "md"
@@ -1413,7 +1338,6 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
         else:
             return text_content.encode("utf-8"), "md"
 
-    # 7. CSV / TSV
     if src == "CSV":
         if target == "TSV":
             tsv_str = text_content.replace(",", "\t")
@@ -1430,7 +1354,6 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
             ext = SUPPORTED_DOCUMENT_FORMATS[target]["ext"]
             return text_content.encode("utf-8"), ext
 
-    # 8. JSON
     if src == "JSON":
         if target == "CSV":
             return json_to_csv(text_content).encode("utf-8"), "csv"
@@ -1438,13 +1361,11 @@ def convert_document(input_bytes: bytes, source_format: str, target_format: str)
             ext = SUPPORTED_DOCUMENT_FORMATS[target]["ext"]
             return text_content.encode("utf-8"), ext
 
-    # 9. HTML
     if src == "HTML":
         if target in ("TXT", "DAT", "LOG"):
             plain = html_to_text(text_content)
             ext = SUPPORTED_DOCUMENT_FORMATS[target]["ext"]
             return plain.encode("utf-8"), ext
 
-    # 10. General fallback for text files
     ext = SUPPORTED_DOCUMENT_FORMATS.get(target, {}).get("ext", target.lower())
     return text_content.encode("utf-8"), ext

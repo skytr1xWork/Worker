@@ -63,7 +63,6 @@
       gap: 20px;
     }
 
-    /* Header */
     header {
       display: flex;
       align-items: center;
@@ -110,7 +109,6 @@
       gap: 10px;
     }
 
-    /* Buttons */
     .btn {
       display: inline-flex;
       align-items: center;
@@ -152,7 +150,6 @@
       font-size: 0.775rem;
     }
 
-    /* Main Status Hero Card */
     .hero-card {
       background: var(--bg-surface);
       border: 1px solid var(--border-subtle);
@@ -281,7 +278,6 @@
       font-size: 1.1rem;
     }
 
-    /* Metrics Grid */
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -319,7 +315,6 @@
       color: var(--text-secondary);
     }
 
-    /* Section Cards */
     .card {
       background: var(--bg-surface);
       border: 1px solid var(--border-subtle);
@@ -347,7 +342,6 @@
       gap: 8px;
     }
 
-    /* Endpoints list */
     .endpoints-list {
       display: flex;
       flex-direction: column;
@@ -388,7 +382,6 @@
       color: var(--text-muted);
     }
 
-    /* Error diagnostics box */
     .error-box {
       background: rgba(239, 68, 68, 0.06);
       border: 1px solid var(--color-rose-border);
@@ -420,7 +413,6 @@
       border: 1px solid rgba(239, 68, 68, 0.2);
     }
 
-    /* Auto refresh indicator */
     .refresh-bar {
       display: flex;
       align-items: center;
@@ -430,7 +422,6 @@
       padding: 4px;
     }
 
-    /* Toast */
     #toast {
       position: fixed;
       bottom: 24px;
@@ -486,7 +477,6 @@
       </div>
     </header>
 
-    <!-- Main Status Card -->
     <div class="hero-card" id="hero-card">
       <div class="status-left">
         <div class="pulse-wrapper">
@@ -507,7 +497,6 @@
       </div>
     </div>
 
-    <!-- Metrics Grid -->
     <div class="grid">
       <div class="metric-card">
         <span class="metric-title">Время работы бота</span>
@@ -531,7 +520,6 @@
       </div>
     </div>
 
-    <!-- Error Diagnostic Section (Visible only on errors) -->
     <div class="card error-box" id="error-section" style="display: none;">
       <div class="error-header">
         <span>⚠️ Последняя ошибка бота (сохранена супервизором)</span>
@@ -544,7 +532,6 @@
       </div>
     </div>
 
-    <!-- Monitoring & Uptime Robot Endpoints -->
     <div class="card">
       <div class="card-header">
         <span class="card-title">📡 Эндпоинты для Uptime Robot и мониторинга</span>
@@ -575,7 +562,6 @@
       </div>
     </div>
 
-    <!-- Refresh footer -->
     <div class="refresh-bar">
       <span>Состояние синхронизируется в реальном времени</span>
       <span id="last-sync">Обновлено: только что</span>
@@ -705,14 +691,12 @@
         httpCode.style.color = "var(--color-rose)";
       }
 
-      // Metrics
       document.getElementById("bot-uptime").innerText = isHealthy ? formatDuration(bot.uptime_seconds) : "0s";
       document.getElementById("bot-started-at").innerText = bot.started_at ? `Запуск: ${new Date(bot.started_at).toLocaleTimeString()}` : "Не запущен";
       document.getElementById("restart-count").innerText = bot.restart_count || 0;
       document.getElementById("restart-note").innerText = `Сбоев подряд: ${bot.consecutive_failures || 0}`;
       document.getElementById("server-uptime").innerText = formatDuration(server.uptime_seconds);
 
-      // Error Section
       const errorSection = document.getElementById("error-section");
       if (bot.last_error) {
         errorSection.style.display = "flex";
@@ -727,7 +711,6 @@
       document.getElementById("last-sync").innerText = "Обновлено: " + new Date().toLocaleTimeString();
     }
 
-    // Initialize
     document.addEventListener("DOMContentLoaded", () => {
       document.getElementById("health-url-text").innerText = window.location.origin + "/health";
       document.getElementById("api-url-text").innerText = window.location.origin + "/api/status";

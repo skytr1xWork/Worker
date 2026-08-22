@@ -16,7 +16,6 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Initializes the database schema."""
     with get_connection() as conn:
         conn.execute(
             """
@@ -33,7 +32,6 @@ def init_db() -> None:
 
 
 def add_user(user_id: int, username: str | None = None, first_name: str | None = None) -> None:
-    """Registers or updates a user in the database."""
     try:
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         with get_connection() as conn:
@@ -54,7 +52,6 @@ def add_user(user_id: int, username: str | None = None, first_name: str | None =
 
 
 def get_all_user_ids() -> list[int]:
-    """Returns a list of all registered user IDs."""
     try:
         with get_connection() as conn:
             cursor = conn.execute("SELECT user_id FROM users")
@@ -65,7 +62,6 @@ def get_all_user_ids() -> list[int]:
 
 
 def get_users_count() -> int:
-    """Returns total number of registered users."""
     try:
         with get_connection() as conn:
             cursor = conn.execute("SELECT COUNT(*) as cnt FROM users")
@@ -77,7 +73,6 @@ def get_users_count() -> int:
 
 
 def delete_user(user_id: int) -> None:
-    """Removes a user from the database."""
     try:
         with get_connection() as conn:
             conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
@@ -87,7 +82,6 @@ def delete_user(user_id: int) -> None:
 
 
 def get_user_id_by_username(username: str) -> int | None:
-    """Finds user_id by username (case-insensitive, strips @)."""
     clean = username.lstrip("@").strip().lower()
     if not clean:
         return None
@@ -102,10 +96,6 @@ def get_user_id_by_username(username: str) -> int | None:
 
 
 def resolve_recipients(raw_input: str) -> tuple[list[int], list[str]]:
-    """
-    Parses comma/space/newline-separated list of IDs or @usernames.
-    Returns (valid_user_ids, not_found_items).
-    """
     tokens = [t.strip() for t in re.split(r'[,;\s\n]+', raw_input.strip()) if t.strip()]
     user_ids = []
     not_found = []
@@ -120,7 +110,6 @@ def resolve_recipients(raw_input: str) -> tuple[list[int], list[str]]:
             else:
                 not_found.append(token)
 
-    # De-duplicate while preserving order
     seen = set()
     unique_ids = []
     for uid in user_ids:

@@ -56,7 +56,6 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="main_router")
 
-# константы для текстов
 HELP_TEXTS = {
     "converter": (
         "Простой конвертер файлов.\n\n"
@@ -129,7 +128,6 @@ HELP_TEXTS = {
 
 @router.message.outer_middleware()
 async def track_user_middleware(handler, event: Message, data):
-    """Automatically records every active bot user to the database."""
     if isinstance(event, Message) and event.from_user and not event.from_user.is_bot:
         db.add_user(
             user_id=event.from_user.id,
@@ -140,7 +138,6 @@ async def track_user_middleware(handler, event: Message, data):
 
 
 def get_admin_ids() -> set[int]:
-    """Returns set of admin user IDs defined in environment variables (ADMIN_ID / ADMIN_IDS / OWNER_ID)."""
     raw = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or os.getenv("OWNER_ID") or ""
     ids = set()
     for chunk in re.split(r'[,\s;]+', raw.strip()):
@@ -543,7 +540,6 @@ async def handle_url_message(message: Message, state: FSMContext) -> None:
 
     current_st = await state.get_state()
 
-    # Автоматическое определение: TikTok ссылка = Shazam
     if service_key == "tiktok" and current_st not in (UrlConverterState.waiting_for_url, UrlConverterState.selecting_format):
         await state.set_state(UrlConverterState.selecting_format)
         await state.update_data(url=url, service=service_key, service_name=service_name)
