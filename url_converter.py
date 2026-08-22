@@ -156,7 +156,24 @@ def _setup_cookies_from_env():
             cookie_data = base64.b64decode(yt_cookies_b64)
             with open(cookie_path, "wb") as f:
                 f.write(cookie_data)
-            logger.info(f"✓ YouTube cookies loaded from YT_COOKIES_BASE64 → {cookie_path} ({len(cookie_data)} bytes)")
+
+            # Validate cookies file
+            cookie_text = cookie_data.decode('utf-8', errors='ignore')
+            youtube_cookies = cookie_text.count('youtube.com')
+            has_sapisid = 'SAPISID' in cookie_text
+
+            logger.info(f"✓ YouTube cookies loaded from YT_COOKIES_BASE64 → {cookie_path}")
+            logger.info(f"  Size: {len(cookie_data)} bytes, YouTube entries: {youtube_cookies}, Has SAPISID: {has_sapisid}")
+
+            if youtube_cookies == 0:
+                logger.error("  ⚠ WARNING: No youtube.com cookies found in file!")
+            if not has_sapisid:
+                logger.warning("  ⚠ WARNING: No SAPISID cookie found!")
+
+            # Show first line for debugging
+            first_line = cookie_text.split('\n')[0][:100]
+            logger.debug(f"  First line: {first_line}")
+
             return
         except Exception as e:
             logger.error(f"✗ Failed to decode YT_COOKIES_BASE64: {e}")
