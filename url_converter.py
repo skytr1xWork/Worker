@@ -86,7 +86,33 @@ def _setup_cookies_from_env():
             except Exception as e:
                 logger.error(f"✗ Failed to copy secret file {secret_path}: {e}")
 
-    # Method 2: SAPISID only (long-lived, 2-3 years)
+    # Method 2: Multi-part base64 cookies (for long cookies split into chunks)
+    parts = []
+    for i in range(1, 11):  # Support up to 10 parts (YT_COOKIES_BASE64_1, YT_COOKIES_BASE64_2, ...)
+        part = os.getenv(f"YT_COOKIES_BASE64_{i}")
+        if part:
+            parts.append(part.strip())
+        elif i == 1:
+            # If part 1 doesn't exist, try single variable
+            break
+        else:
+            # No more parts
+            break
+
+    if parts:
+        import base64
+        try:
+            # Combine all parts
+            combined = ''.join(parts).replace('\n', '').replace('\r', '').replace(' ', '')
+            cookie_data = base64.b64decode(combined)
+            with open(cookie_path, "wb") as f:
+                f.write(cookie_data)
+            logger.info(f"✓ YouTube cookies loaded from {len(parts)} YT_COOKIES_BASE64 parts → {cookie_path} ({len(cookie_data)} bytes)")
+            return
+        except Exception as e:
+            logger.error(f"✗ Failed to decode multi-part YT_COOKIES_BASE64: {e}")
+
+    # Method 3: SAPISID only (long-lived, 2-3 years)
     sapisid = os.getenv("YT_SAPISID")
     if sapisid:
         try:
@@ -120,7 +146,7 @@ def _setup_cookies_from_env():
         except Exception as e:
             logger.error(f"✗ Failed to setup SAPISID: {e}")
 
-    # Method 3: Full cookies file (base64 encoded)
+    # Method 4: Full cookies file (base64 encoded) - single variable
     yt_cookies_b64 = os.getenv("YT_COOKIES_BASE64")
     if yt_cookies_b64:
         import base64
@@ -136,7 +162,7 @@ def _setup_cookies_from_env():
             logger.error(f"✗ Failed to decode YT_COOKIES_BASE64: {e}")
             logger.error(f"   Base64 length: {len(yt_cookies_b64)} chars, first 50: {yt_cookies_b64[:50]}")
 
-    logger.warning("No YouTube cookies configured (secret file, YT_SAPISID, or YT_COOKIES_BASE64)")
+    logger.warning("No YouTube cookies configured (secret file, multi-part, YT_SAPISID, or YT_COOKIES_BASE64)")
 
 
 # Auto-setup cookies on module import
