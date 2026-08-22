@@ -68,21 +68,34 @@ def _extract_youtube_video_id(url: str) -> str | None:
 
 
 def _setup_cookies_from_env():
-    """Setup cookies from environment variable for containerized environments"""
+    """Setup cookies from environment variable or secret file for containerized environments"""
     cookie_path = "/tmp/yt-dlp-cookies.txt"
 
-    # Method 1: SAPISID only (long-lived, 2-3 years) - PREFERRED
+    # Method 1: Secret File (Render supports mounting files to /etc/secrets/)
+    secret_file_paths = [
+        "/etc/secrets/yt-cookies.txt",
+        "/etc/secrets/cookies.txt",
+        os.path.expanduser("~/.config/yt-dlp/cookies.txt"),
+    ]
+    for secret_path in secret_file_paths:
+        if os.path.exists(secret_path):
+            try:
+                shutil.copy(secret_path, cookie_path)
+                logger.info(f"✓ YouTube cookies loaded from secret file: {secret_path}")
+                return
+            except Exception as e:
+                logger.error(f"✗ Failed to copy secret file {secret_path}: {e}")
+
+    # Method 2: SAPISID only (long-lived, 2-3 years)
     sapisid = os.getenv("YT_SAPISID")
     if sapisid:
         try:
             # SAPISID format: <hash>/<token> or just <token>
-            # Extract both parts if available
             if '/' in sapisid:
                 hash_part, token_part = sapisid.split('/', 1)
             else:
                 hash_part = token_part = sapisid
 
-            # Generate Netscape cookies.txt format with all necessary YouTube cookies
             expiry = int(time.time()) + 94608000  # ~3 years
             cookie_content = f"""# Netscape HTTP Cookie File
 # Generated for yt-dlp YouTube authentication
@@ -107,20 +120,23 @@ def _setup_cookies_from_env():
         except Exception as e:
             logger.error(f"✗ Failed to setup SAPISID: {e}")
 
-    # Method 2: Full cookies file (base64 encoded) - FALLBACK
+    # Method 3: Full cookies file (base64 encoded)
     yt_cookies_b64 = os.getenv("YT_COOKIES_BASE64")
     if yt_cookies_b64:
         import base64
         try:
+            # Remove any whitespace/newlines that might have been added
+            yt_cookies_b64 = yt_cookies_b64.strip().replace('\n', '').replace('\r', '').replace(' ', '')
             cookie_data = base64.b64decode(yt_cookies_b64)
             with open(cookie_path, "wb") as f:
                 f.write(cookie_data)
-            logger.info(f"✓ YouTube cookies loaded from YT_COOKIES_BASE64 → {cookie_path}")
+            logger.info(f"✓ YouTube cookies loaded from YT_COOKIES_BASE64 → {cookie_path} ({len(cookie_data)} bytes)")
             return
         except Exception as e:
             logger.error(f"✗ Failed to decode YT_COOKIES_BASE64: {e}")
+            logger.error(f"   Base64 length: {len(yt_cookies_b64)} chars, first 50: {yt_cookies_b64[:50]}")
 
-    logger.warning("No YouTube cookies configured (YT_SAPISID or YT_COOKIES_BASE64)")
+    logger.warning("No YouTube cookies configured (secret file, YT_SAPISID, or YT_COOKIES_BASE64)")
 
 
 # Auto-setup cookies on module import
