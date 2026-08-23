@@ -5,6 +5,7 @@ import time
 import traceback
 from datetime import datetime, timezone
 
+import requests
 from flask import Flask, jsonify, render_template, request
 
 logging.basicConfig(
@@ -298,5 +299,26 @@ def system_resources():
 @app.get("/favicon.ico")
 def favicon():
     return "", 204
+
+
+def self_ping_loop():
+    """Периодически пингует /health, чтобы сервер не засыпал."""
+    logger.info("Self-ping loop started.")
+    base_url = os.getenv("SELF_PING_URL", "http://localhost:8000")
+    interval = int(os.getenv("SELF_PING_INTERVAL", "300"))  # 5 минут по умолчанию
+
+    while True:
+        time.sleep(interval)
+        try:
+            url = f"{base_url}/health"
+            response = requests.get(url, timeout=10)
+            logger.debug(f"Self-ping /health: {response.status_code}")
+        except Exception as e:
+            logger.warning(f"Self-ping failed: {e}")
+
+
+# Запуск self-ping в отдельном потоке
+self_ping_thread = threading.Thread(target=self_ping_loop, name="SelfPing", daemon=True)
+self_ping_thread.start()
 
 supervisor.start()
