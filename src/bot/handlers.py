@@ -540,7 +540,7 @@ async def start_article_summary(message: Message, state: FSMContext) -> None:
     """Начало процесса создания выжимки статьи."""
     await state.set_state(ArticleSummaryState.waiting_for_url)
     await message.answer(
-        "📝 <b>Создание выжимки статьи</b>\n\n"
+        "<b>Создание выжимки статьи</b>\n\n"
         "Отправьте ссылку на статью, и я создам краткую выжимку её содержания.\n\n"
         "Поддерживаются большинство новостных сайтов и блогов.",
         reply_markup=get_cancel_keyboard(),
@@ -556,12 +556,12 @@ async def process_article_url(message: Message, state: FSMContext) -> None:
     # Проверка что это валидный URL
     if not url.startswith(("http://", "https://")):
         await message.answer(
-            "❌ Пожалуйста, отправьте корректную ссылку (начинающуюся с http:// или https://)",
+            "Пожалуйста, отправьте корректную ссылку (начинающуюся с http:// или https://)",
             reply_markup=get_cancel_keyboard(),
         )
         return
 
-    status_msg = await message.answer("⏳ Загружаю статью и создаю выжимку...\nЭто может занять несколько секунд.")
+    status_msg = await message.answer("Создание выжимки...")
 
     try:
         # Инициализируем AI сервис и создаём выжимку
@@ -570,7 +570,7 @@ async def process_article_url(message: Message, state: FSMContext) -> None:
 
         # Отправляем результат
         await status_msg.edit_text(
-            f"📄 <b>Краткая выжимка статьи:</b>\n\n{summary}\n\n"
+            f"<b>Краткая выжимка статьи:</b>\n\n{summary}\n\n"
             f"<i>Источник:</i> <a href='{url}'>ссылка</a>",
             parse_mode="HTML",
             reply_markup=get_summary_done_keyboard(),
@@ -583,7 +583,7 @@ async def process_article_url(message: Message, state: FSMContext) -> None:
         # Ошибки конфигурации (не настроены env переменные)
         logger.error(f"Configuration error: {e}")
         await status_msg.edit_text(
-            "❌ <b>Ошибка конфигурации</b>\n\n"
+            "<b>Ошибка конфигурации</b>\n\n"
             "AI сервис не настроен. Пожалуйста, свяжитесь с администратором.\n"
             f"Детали: {str(e)}",
             parse_mode="HTML",
@@ -606,7 +606,7 @@ async def process_article_url(message: Message, state: FSMContext) -> None:
             user_message = "Произошла ошибка при создании выжимки. Попробуйте другую статью."
 
         await status_msg.edit_text(
-            f"❌ <b>Ошибка</b>\n\n{user_message}",
+            f"<b>Ошибка</b>\n\n{user_message}",
             parse_mode="HTML",
             reply_markup=get_cancel_keyboard(),
         )
@@ -618,7 +618,7 @@ async def callback_summary_new_url(callback: CallbackQuery, state: FSMContext) -
     await callback.answer()
     await state.set_state(ArticleSummaryState.waiting_for_url)
     await callback.message.edit_text(
-        "📝 <b>Создание выжимки статьи</b>\n\n"
+        "<b>Создание выжимки статьи</b>\n\n"
         "Отправьте ссылку на статью для создания выжимки.",
         reply_markup=get_cancel_keyboard(),
         parse_mode="HTML",

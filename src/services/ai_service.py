@@ -57,29 +57,22 @@ class AIService:
     async def fetch_article_content(self, url: str) -> str:
         """
         Получение текстового содержимого статьи по URL.
-        Использует простой подход - извлечение текста из HTML.
+        Использует Jina AI Reader API для извлечения чистого текста из статей.
         """
         try:
+            # Используем Jina AI Reader API для получения чистого текста
+            jina_url = f"https://r.jina.ai/{url}"
+
             async with aiohttp.ClientSession() as session:
                 headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    "Accept": "text/plain",
+                    "X-With-Generated-Alt": "true"
                 }
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                async with session.get(jina_url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status != 200:
-                        raise Exception(f"Failed to fetch URL: HTTP {resp.status}")
+                        raise Exception(f"Failed to fetch article via Jina Reader: HTTP {resp.status}")
 
-                    html_content = await resp.text()
-
-                    # Простая очистка HTML от тегов
-                    # Для продакшена лучше использовать BeautifulSoup или readability
-                    import re
-                    # Удаляем скрипты и стили
-                    html_content = re.sub(r"<script[^>]*>.*?</script>", "", html_content, flags=re.DOTALL | re.IGNORECASE)
-                    html_content = re.sub(r"<style[^>]*>.*?</style>", "", html_content, flags=re.DOTALL | re.IGNORECASE)
-                    # Удаляем все HTML теги
-                    text = re.sub(r"<[^>]+>", " ", html_content)
-                    # Убираем множественные пробелы и переносы
-                    text = re.sub(r"\s+", " ", text)
+                    text = await resp.text()
                     text = text.strip()
 
                     if not text:
