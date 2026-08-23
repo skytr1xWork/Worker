@@ -587,7 +587,6 @@ async def process_article_url(message: Message, state: FSMContext) -> None:
             "AI сервис не настроен. Пожалуйста, свяжитесь с администратором.\n"
             f"Детали: {str(e)}",
             parse_mode="HTML",
-            reply_markup=get_cancel_keyboard(),
         )
 
     except Exception as e:
@@ -608,7 +607,6 @@ async def process_article_url(message: Message, state: FSMContext) -> None:
         await status_msg.edit_text(
             f"<b>Ошибка</b>\n\n{user_message}",
             parse_mode="HTML",
-            reply_markup=get_cancel_keyboard(),
         )
 
 

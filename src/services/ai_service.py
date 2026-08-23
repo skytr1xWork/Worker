@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import os
 from typing import Any, Dict
@@ -65,12 +66,13 @@ class AIService:
 
             async with aiohttp.ClientSession() as session:
                 headers = {
-                    "Accept": "text/plain",
-                    "X-With-Generated-Alt": "true"
+                    "Accept": "text/plain"
                 }
                 async with session.get(jina_url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status != 200:
-                        raise Exception(f"Failed to fetch article via Jina Reader: HTTP {resp.status}")
+                        # Если Jina не работает, пробуем простой парсинг
+                        logger.warning(f"Jina Reader failed with status {resp.status}, falling back to simple parsing")
+                        return await self._fetch_article_simple(url)
 
                     text = await resp.text()
                     text = text.strip()
@@ -79,7 +81,7 @@ class AIService:
                         raise Exception("No text content extracted from URL")
 
                     # Ограничиваем длину (чтобы не превысить лимиты API)
-                    max_length = 15000  # примерно 3750 токенов
+                    max_length = 15000
                     if len(text) > max_length:
                         text = text[:max_length] + "..."
 
@@ -92,6 +94,36 @@ class AIService:
         except Exception as e:
             logger.error(f"Error fetching article content: {e}")
             raise
+
+    async def _fetch_article_simple(self, url: str) -> str:
+        """Резервный метод для извлечения текста из HTML."""
+        import re
+
+        async with aiohttp.ClientSession() as session:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status != 200:
+                    raise Exception(f"Failed to fetch URL: HTTP {resp.status}")
+
+                html_content = await resp.text()
+
+                # Простая очистка HTML
+                html_content = re.sub(r"<script[^>]*>.*?</script>", "", html_content, flags=re.DOTALL | re.IGNORECASE)
+                html_content = re.sub(r"<style[^>]*>.*?</style>", "", html_content, flags=re.DOTALL | re.IGNORECASE)
+                text = re.sub(r"<[^>]+>", " ", html_content)
+                text = re.sub(r"\s+", " ", text)
+                text = text.strip()
+
+                if not text:
+                    raise Exception("No text content extracted from URL")
+
+                max_length = 15000
+                if len(text) > max_length:
+                    text = text[:max_length] + "..."
+
+                return text
 
     async def summarize_article(self, article_text: str) -> str:
         """Создание краткой выжимки статьи через OpenRouter API."""
