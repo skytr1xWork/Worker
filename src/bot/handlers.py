@@ -552,6 +552,7 @@ async def start_article_summary(message: Message, state: FSMContext) -> None:
 async def process_article_url(message: Message, state: FSMContext) -> None:
     """Обработка URL статьи для создания выжимки."""
     url = message.text.strip()
+    logger.info(f"process_article_url called with URL: {url}")
 
     # Проверка что это валидный URL
     if not url.startswith(("http://", "https://")):

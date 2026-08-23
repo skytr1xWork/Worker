@@ -205,10 +205,15 @@ class AIService:
         """
         Полный процесс: получение статьи по URL и создание выжимки.
         """
+        logger.info(f"Starting summarization for URL: {url}")
+
         # Получаем содержимое статьи
         article_text = await self.fetch_article_content(url)
+        logger.info(f"Article content fetched, length: {len(article_text)} chars")
 
         # Создаём выжимку
+        logger.info("Sending article to AI for summarization...")
         summary = await self.summarize_article(article_text)
+        logger.info(f"Summary received, length: {len(summary) if summary else 0} chars")
 
         return summary
