@@ -70,15 +70,16 @@ class AIService:
                 }
                 async with session.get(jina_url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status != 200:
-                        # Если Jina не работает, пробуем простой парсинг
                         logger.warning(f"Jina Reader failed with status {resp.status}, falling back to simple parsing")
                         return await self._fetch_article_simple(url)
 
                     text = await resp.text()
                     text = text.strip()
 
-                    if not text:
-                        raise Exception("No text content extracted from URL")
+                    # Проверяем что Jina вернула реальный контент, а не страницу ошибки/авторизации
+                    if not text or "Internal error" in text or "Log in" in text[:500]:
+                        logger.warning("Jina Reader returned error/auth page, falling back to simple parsing")
+                        return await self._fetch_article_simple(url)
 
                     # Ограничиваем длину (чтобы не превысить лимиты API)
                     max_length = 15000
@@ -101,22 +102,42 @@ class AIService:
 
         async with aiohttp.ClientSession() as session:
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept-Language": "ru,en;q=0.9",
             }
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            # Следуем редиректам (habr.com/p/ -> habr.com/ru/p/)
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30), allow_redirects=True) as resp:
                 if resp.status != 200:
                     raise Exception(f"Failed to fetch URL: HTTP {resp.status}")
 
                 html_content = await resp.text()
 
-                # Простая очистка HTML
+                # Удаляем script и style
                 html_content = re.sub(r"<script[^>]*>.*?</script>", "", html_content, flags=re.DOTALL | re.IGNORECASE)
                 html_content = re.sub(r"<style[^>]*>.*?</style>", "", html_content, flags=re.DOTALL | re.IGNORECASE)
-                text = re.sub(r"<[^>]+>", " ", html_content)
-                text = re.sub(r"\s+", " ", text)
-                text = text.strip()
 
-                if not text:
+                # Habr: вытаскиваем контент из article-formatted-body
+                habr_match = re.search(
+                    r'class="article-formatted-body[^"]*">(.*?)(?=<div class="tm-article-presenter__meta)',
+                    html_content, re.DOTALL
+                )
+                if habr_match:
+                    text = re.sub(r"<[^>]+>", " ", habr_match.group(1))
+                else:
+                    # Для остальных сайтов: ищем семантические теги
+                    semantic_match = re.search(
+                        r"<(?:article|main|section)[^>]*>(.*?)</(?:article|main|section)>",
+                        html_content, re.DOTALL | re.IGNORECASE
+                    )
+                    if semantic_match:
+                        text = re.sub(r"<[^>]+>", " ", semantic_match.group(1))
+                    else:
+                        # Грубая очистка всей страницы как последний резерв
+                        text = re.sub(r"<[^>]+>", " ", html_content)
+
+                text = re.sub(r"\s+", " ", text).strip()
+
+                if not text or len(text) < 100:
                     raise Exception("No text content extracted from URL")
 
                 max_length = 15000
@@ -153,7 +174,7 @@ class AIService:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    self.api_url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=60)
+                    self.api_url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=120)
                 ) as resp:
                     if resp.status != 200:
                         error_text = await resp.text()
@@ -170,7 +191,7 @@ class AIService:
 
                     return content.strip()
 
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             raise Exception("Timeout while waiting for AI response")
         except aiohttp.ClientError as e:
             raise Exception(f"Network error: {str(e)}")
