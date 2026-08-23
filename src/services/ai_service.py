@@ -164,7 +164,11 @@ class AIService:
                     if "choices" not in data or not data["choices"]:
                         raise Exception("Invalid response from OpenRouter API")
 
-                    return data["choices"][0]["message"]["content"]
+                    content = data["choices"][0]["message"].get("content")
+                    if not content or not content.strip():
+                        raise Exception("Empty response from OpenRouter API")
+
+                    return content.strip()
 
         except asyncio.TimeoutError:
             raise Exception("Timeout while waiting for AI response")

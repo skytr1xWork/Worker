@@ -601,6 +601,8 @@ async def process_article_url(message: Message, state: FSMContext) -> None:
             user_message = "Превышено время ожидания. Попробуйте ещё раз."
         elif "no text content" in error_text.lower():
             user_message = "Не удалось извлечь текст из статьи. Возможно, сайт использует защиту от парсинга."
+        elif "empty response" in error_text.lower():
+            user_message = "AI не вернул ответ. Возможно, статья слишком короткая или недоступна."
         else:
             user_message = "Произошла ошибка при создании выжимки. Попробуйте другую статью."
 
