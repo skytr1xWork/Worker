@@ -7,8 +7,17 @@ import traceback
 from collections import deque
 from datetime import datetime, timezone
 from functools import wraps
+from itertools import islice
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    logger = logging.getLogger("BotSupervisor")
+    logger.warning("psutil not available, /srvc endpoint will be disabled")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,8 +26,41 @@ logging.basicConfig(
 logger = logging.getLogger("BotSupervisor")
 
 
+def ttl_cache(seconds=1):
+    """TTL cache decorator for methods. Caches result for specified seconds."""
+    def decorator(func):
+        cache = {"result": None, "timestamp": 0, "lock": threading.Lock()}
+
+        @wraps(func)
+        def wrapper(self):
+            now = time.time()
+            with cache["lock"]:
+                if now - cache["timestamp"] > seconds:
+                    cache["result"] = func(self)
+                    cache["timestamp"] = now
+                return cache["result"]
+
+        return wrapper
+    return decorator
+
+
+def serialize_request_entry(entry):
+    """Convert request entry with float timestamp to JSON-serializable format."""
+    return {
+        "timestamp": datetime.fromtimestamp(entry["timestamp"], timezone.utc).isoformat(),
+        "method": entry["method"],
+        "path": entry["path"],
+        "status": entry["status"],
+        "response_time_ms": entry["response_time_ms"],
+        "ip": entry["ip"],
+    }
+
+
 class RequestLogger:
     """Tracks HTTP requests for analytics."""
+    MAX_TRACKED_PATHS = 100
+    MAX_TRACKED_STATUS_CODES = 20
+
     def __init__(self, max_size=1000):
         self._lock = threading.Lock()
         self.requests = deque(maxlen=max_size)
@@ -31,8 +73,9 @@ class RequestLogger:
 
     def log_request(self, method, path, status_code, response_time_ms, ip):
         with self._lock:
+            # Store timestamp as float for performance
             entry = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": time.time(),
                 "method": method,
                 "path": path,
                 "status": status_code,
@@ -42,17 +85,46 @@ class RequestLogger:
             self.requests.append(entry)
 
             self.stats["total_requests"] += 1
-            self.stats["status_codes"][str(status_code)] = self.stats["status_codes"].get(str(status_code), 0) + 1
+
+            # Limit status_codes dictionary size
+            status_key = str(status_code)
+            if status_key not in self.stats["status_codes"] and len(self.stats["status_codes"]) >= self.MAX_TRACKED_STATUS_CODES:
+                # Remove least frequent status code
+                least_frequent = min(self.stats["status_codes"].items(), key=lambda x: x[1])[0]
+                del self.stats["status_codes"][least_frequent]
+            self.stats["status_codes"][status_key] = self.stats["status_codes"].get(status_key, 0) + 1
+
+            # Limit paths dictionary size
+            if path not in self.stats["paths"] and len(self.stats["paths"]) >= self.MAX_TRACKED_PATHS:
+                # Remove least frequent path
+                least_frequent = min(self.stats["paths"].items(), key=lambda x: x[1])[0]
+                del self.stats["paths"][least_frequent]
             self.stats["paths"][path] = self.stats["paths"].get(path, 0) + 1
+
+            # Methods are limited (GET, POST, HEAD, etc.) so no size limit needed
             self.stats["methods"][method] = self.stats["methods"].get(method, 0) + 1
 
     def get_recent_requests(self, limit=50):
         with self._lock:
-            return list(self.requests)[-limit:]
+            # Optimize: avoid full copy, use islice for better performance
+            total = len(self.requests)
+            if total <= limit:
+                # If we have fewer items than limit, return all
+                return [serialize_request_entry(e) for e in self.requests]
+            else:
+                # Use islice to get only last 'limit' items without full copy
+                start_idx = total - limit
+                return [serialize_request_entry(e) for e in islice(self.requests, start_idx, None)]
 
     def get_stats(self):
         with self._lock:
-            return dict(self.stats)
+            # Return shallow copy to prevent external mutations
+            return {
+                "total_requests": self.stats["total_requests"],
+                "status_codes": dict(self.stats["status_codes"]),
+                "paths": dict(self.stats["paths"]),
+                "methods": dict(self.stats["methods"]),
+            }
 
 
 class BotSupervisor:
@@ -133,8 +205,10 @@ class BotSupervisor:
                     self.is_running = True
                     self.status = "healthy"
                 logger.info("Bot is healthy and polling updates.")
-                while worker_thread.is_alive() and not self._stop_event.is_set() and not self._restart_event.is_set():
-                    time.sleep(1.0)
+                # Optimized: use Event.wait() instead of sleep() + check
+                while worker_thread.is_alive():
+                    if self._stop_event.wait(timeout=1.0) or self._restart_event.wait(timeout=0):
+                        break
             else:
                 logger.warning("Bot failed during startup phase.")
 
@@ -169,14 +243,17 @@ class BotSupervisor:
 
                 logger.warning("Bot worker finished. Server continues running normally.")
 
-            while not self._stop_event.is_set() and not self._restart_event.is_set():
-                time.sleep(1.0)
+            # Optimized: use Event.wait() instead of active polling
+            while True:
+                if self._stop_event.wait(timeout=1.0) or self._restart_event.wait(timeout=0):
+                    break
 
     def record_health_check(self, is_healthy: bool):
         with self._lock:
-            self.last_health_check = datetime.now(timezone.utc)
+            now = time.time()
+            self.last_health_check = datetime.fromtimestamp(now, timezone.utc)
             self.uptime_checks.append({
-                "timestamp": self.last_health_check.isoformat(),
+                "timestamp": now,  # Store as float for performance
                 "healthy": is_healthy,
             })
 
@@ -185,11 +262,9 @@ class BotSupervisor:
             if not self.uptime_checks:
                 return 100.0
 
-            cutoff = datetime.now(timezone.utc).timestamp() - (minutes * 60)
-            recent_checks = [
-                c for c in self.uptime_checks
-                if datetime.fromisoformat(c["timestamp"]).timestamp() > cutoff
-            ]
+            cutoff = time.time() - (minutes * 60)
+            # Optimized: no datetime parsing, direct float comparison
+            recent_checks = [c for c in self.uptime_checks if c["timestamp"] > cutoff]
 
             if not recent_checks:
                 return 100.0
@@ -197,6 +272,7 @@ class BotSupervisor:
             healthy_count = sum(1 for c in recent_checks if c["healthy"])
             return round((healthy_count / len(recent_checks)) * 100, 2)
 
+    @ttl_cache(seconds=1)
     def get_telemetry(self) -> dict:
         with self._lock:
             now = datetime.now(timezone.utc)
@@ -357,8 +433,16 @@ def api_restart():
 
 @app.get("/srvc")
 def system_resources():
-    import psutil
-    import os
+    if not PSUTIL_AVAILABLE:
+        return jsonify({"error": "psutil module not available"}), 503
+
+    # Cache system resource data for 5 seconds to avoid blocking I/O on every request
+    return _get_system_resources_cached()
+
+
+@ttl_cache(seconds=5)
+def _get_system_resources_cached():
+    """Cached system resources to avoid expensive I/O operations."""
     from pathlib import Path
 
     # Try to read cgroup v2 memory limit (Docker/Kubernetes)
