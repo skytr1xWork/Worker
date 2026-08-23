@@ -76,9 +76,11 @@ class AIService:
                     text = await resp.text()
                     text = text.strip()
 
-                    # Проверяем что Jina вернула реальный контент, а не страницу ошибки/авторизации
-                    if not text or "Internal error" in text or "Log in" in text[:500]:
-                        logger.warning("Jina Reader returned error/auth page, falling back to simple parsing")
+                    # Проверяем что Jina вернула реальный контент статьи, а не страницу ошибки/авторизации/блокировки.
+                    # Страницы с ошибкой обычно содержат мало текста (навигация, заглушка),
+                    # реальные статьи — как правило более 500 символов.
+                    if not text or len(text) < 500:
+                        logger.warning("Jina Reader returned too little content, falling back to simple parsing")
                         return await self._fetch_article_simple(url)
 
                     # Ограничиваем длину (чтобы не превысить лимиты API)
