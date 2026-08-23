@@ -258,19 +258,20 @@ class BotSupervisor:
             })
 
     def get_uptime_percentage(self, minutes=60):
-        with self._lock:
-            if not self.uptime_checks:
-                return 100.0
+        # NOTE: This method is called from within get_telemetry() which already holds the lock
+        # So we DON'T acquire lock here to avoid deadlock
+        if not self.uptime_checks:
+            return 100.0
 
-            cutoff = time.time() - (minutes * 60)
-            # Optimized: no datetime parsing, direct float comparison
-            recent_checks = [c for c in self.uptime_checks if c["timestamp"] > cutoff]
+        cutoff = time.time() - (minutes * 60)
+        # Optimized: no datetime parsing, direct float comparison
+        recent_checks = [c for c in self.uptime_checks if c["timestamp"] > cutoff]
 
-            if not recent_checks:
-                return 100.0
+        if not recent_checks:
+            return 100.0
 
-            healthy_count = sum(1 for c in recent_checks if c["healthy"])
-            return round((healthy_count / len(recent_checks)) * 100, 2)
+        healthy_count = sum(1 for c in recent_checks if c["healthy"])
+        return round((healthy_count / len(recent_checks)) * 100, 2)
 
     @ttl_cache(seconds=1)
     def get_telemetry(self) -> dict:
