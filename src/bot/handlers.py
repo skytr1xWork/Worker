@@ -12,8 +12,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, Message
 
-import db
-from converter import (
+from src.database import db
+from src.services.converter import (
     AUDIO_EXTENSIONS,
     AUDIO_MIME_TYPES,
     SUPPORTED_AUDIO_FORMATS,
@@ -30,7 +30,7 @@ from converter import (
     format_size,
     normalize_format,
 )
-from keyboards import (
+from src.bot.keyboards import (
     get_broadcast_cancel_keyboard,
     get_broadcast_type_keyboard,
     get_cancel_keyboard,
@@ -40,12 +40,14 @@ from keyboards import (
     get_main_keyboard,
     get_qr_done_keyboard,
     get_shazam_done_keyboard,
+    get_summary_done_keyboard,
     get_url_done_keyboard,
     get_url_format_keyboard,
 )
-from qr_service import generate_qr_image, read_qr_from_image
-from tiktok_shazam import shazam_tiktok_url
-from url_converter import (
+from src.services.ai_service import AIService
+from src.services.qr_service import generate_qr_image, read_qr_from_image
+from src.services.tiktok_shazam import shazam_tiktok_url
+from src.services.url_converter import (
     DOWNLOAD_SEMAPHORE,
     detect_service,
     download_url_to_file,
@@ -102,6 +104,16 @@ HELP_TEXTS = {
         "• Бот распознает музыку автоматически\n"
         "• Если трек не найден, можешь скачать аудио в MP3\n\n"
         "Функция подлежит реворку в скором времени. Лучше сейчас не надеятся на 100% точность.\n"
+    ),
+    "summary": (
+        "Сжатие статей\n\n"
+        "Создание краткой выжимки статей с помощью ИИ.\n\n"
+        "Что умеет:\n"
+        "• Выделять главную мысль статьи (а че ты еще хотел то)\n"
+        "Как использовать:\n"
+        "• Отправь ссылку на статью\n"
+        "• Дождись обработки (обычно 5-15 секунд)\n"
+        "Принимаются статьи вообще любые и на любых языках.\n\n"
     ),
     "general": (
         "Общая информация\n\n"
@@ -163,6 +175,10 @@ class QRState(StatesGroup):
 class BroadcastState(StatesGroup):
     waiting_for_recipients = State()
     waiting_for_message = State()
+
+
+class ArticleSummaryState(StatesGroup):
+    waiting_for_url = State()
 
 
 @router.message(CommandStart())
@@ -516,6 +532,97 @@ async def process_shazam_for_url(event: Message | CallbackQuery, url: str, state
             )
         finally:
             gc.collect()
+
+
+@router.message(Command("summary"))
+@router.message(F.text == "Сжатие статей")
+async def start_article_summary(message: Message, state: FSMContext) -> None:
+    """Начало процесса создания выжимки статьи."""
+    await state.set_state(ArticleSummaryState.waiting_for_url)
+    await message.answer(
+        "📝 <b>Создание выжимки статьи</b>\n\n"
+        "Отправьте ссылку на статью, и я создам краткую выжимку её содержания.\n\n"
+        "Поддерживаются большинство новостных сайтов и блогов.",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.message(ArticleSummaryState.waiting_for_url, F.text)
+async def process_article_url(message: Message, state: FSMContext) -> None:
+    """Обработка URL статьи для создания выжимки."""
+    url = message.text.strip()
+
+    # Проверка что это валидный URL
+    if not url.startswith(("http://", "https://")):
+        await message.answer(
+            "❌ Пожалуйста, отправьте корректную ссылку (начинающуюся с http:// или https://)",
+            reply_markup=get_cancel_keyboard(),
+        )
+        return
+
+    status_msg = await message.answer("⏳ Загружаю статью и создаю выжимку...\nЭто может занять несколько секунд.")
+
+    try:
+        # Инициализируем AI сервис и создаём выжимку
+        ai_service = AIService()
+        summary = await ai_service.summarize_from_url(url)
+
+        # Отправляем результат
+        await status_msg.edit_text(
+            f"📄 <b>Краткая выжимка статьи:</b>\n\n{summary}\n\n"
+            f"<i>Источник:</i> <a href='{url}'>ссылка</a>",
+            parse_mode="HTML",
+            reply_markup=get_summary_done_keyboard(),
+            disable_web_page_preview=True,
+        )
+
+        await state.clear()
+
+    except ValueError as e:
+        # Ошибки конфигурации (не настроены env переменные)
+        logger.error(f"Configuration error: {e}")
+        await status_msg.edit_text(
+            "❌ <b>Ошибка конфигурации</b>\n\n"
+            "AI сервис не настроен. Пожалуйста, свяжитесь с администратором.\n"
+            f"Детали: {str(e)}",
+            parse_mode="HTML",
+            reply_markup=get_cancel_keyboard(),
+        )
+
+    except Exception as e:
+        # Другие ошибки (проблемы сети, парсинга, API)
+        logger.error(f"Error during article summarization: {e}", exc_info=True)
+        error_text = str(e)
+
+        # Упрощённое сообщение для пользователя
+        if "fetch" in error_text.lower() or "network" in error_text.lower():
+            user_message = "Не удалось загрузить статью. Проверьте, что ссылка доступна."
+        elif "timeout" in error_text.lower():
+            user_message = "Превышено время ожидания. Попробуйте ещё раз."
+        elif "no text content" in error_text.lower():
+            user_message = "Не удалось извлечь текст из статьи. Возможно, сайт использует защиту от парсинга."
+        else:
+            user_message = "Произошла ошибка при создании выжимки. Попробуйте другую статью."
+
+        await status_msg.edit_text(
+            f"❌ <b>Ошибка</b>\n\n{user_message}",
+            parse_mode="HTML",
+            reply_markup=get_cancel_keyboard(),
+        )
+
+
+@router.callback_query(F.data == "summary:new_url")
+async def callback_summary_new_url(callback: CallbackQuery, state: FSMContext) -> None:
+    """Обработка нажатия на кнопку 'Сжать другую статью'."""
+    await callback.answer()
+    await state.set_state(ArticleSummaryState.waiting_for_url)
+    await callback.message.edit_text(
+        "📝 <b>Создание выжимки статьи</b>\n\n"
+        "Отправьте ссылку на статью для создания выжимки.",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="HTML",
+    )
 
 
 @router.message(F.text.regexp(r'https?://[^\s<>"]+'))

@@ -1,6 +1,6 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
-from converter import (
+from src.services.converter import (
     DOCUMENT_TARGETS,
     SUPPORTED_AUDIO_FORMATS,
     SUPPORTED_DOCUMENT_FORMATS,
@@ -16,8 +16,9 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     builder.button(text="Конвертер (из ссылки)")
     builder.button(text="Управление QR")
     builder.button(text="Шазам (TikTok)")
+    builder.button(text="Сжатие статей")
     builder.button(text="Помощь")
-    builder.adjust(2, 2, 1)
+    builder.adjust(2, 2, 1, 1)
     return builder.as_markup(resize_keyboard=True)
 
 
@@ -113,6 +114,14 @@ def get_help_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="Конвертер", callback_data="help:converter")
     builder.button(text="Конвертер из ссылок", callback_data="help:url_converter")
     builder.button(text="Шазам", callback_data="help:shazam")
+    builder.button(text="Сжатие статей", callback_data="help:summary")
     builder.button(text="Общая помощь", callback_data="help:general")
-    builder.adjust(2, 2)
+    builder.adjust(2, 2, 1)
     return builder.as_markup()
+
+
+def get_summary_done_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Сжать другую статью", callback_data="summary:new_url")
+    return builder.as_markup()
+

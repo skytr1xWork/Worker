@@ -1,0 +1,18 @@
+parameter,value,description
+model,${AI_MODEL},OpenRouter model name
+api_key,${AI_API},OpenRouter API key
+temperature,0.3,Creativity level (0-2)
+max_tokens,1000,Maximum response length
+top_p,0.9,Nucleus sampling
+frequency_penalty,0.0,Penalty for repetition
+presence_penalty,0.0,Penalty for new topics
+prompt,"Ты - профессиональный редактор. Твоя задача - создать краткую выжимку статьи на русском языке.
+
+Требования:
+1. Выдели главную мысль (1-2 предложения)
+2. Перечисли ключевые тезисы (3-5 пунктов)
+3. Сохрани важные цифры и факты
+4. Объём: не более 300 слов
+5. Стиль: информативный, без воды
+
+Статья для анализа:",Prompt for summarization

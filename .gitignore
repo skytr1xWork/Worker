@@ -1,6 +1,8 @@
-__pychache__/
+__pycache__/
 .venv/
 users.db
 .claude/
 my stuff/
 docs/
+.env
+*.pyc

@@ -3,8 +3,8 @@ import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-import db
-from handlers import router as main_router
+from src.database import db
+from src.bot.handlers import router as main_router
 
 TOKEN = os.getenv("BOT_TOKEN", "")
 
