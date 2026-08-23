@@ -1,18 +1,58 @@
 import logging
 import os
+import secrets
 import threading
 import time
 import traceback
+from collections import deque
 from datetime import datetime, timezone
+from functools import wraps
 
-import requests
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("BotSupervisor")
+
+
+class RequestLogger:
+    """Tracks HTTP requests for analytics."""
+    def __init__(self, max_size=1000):
+        self._lock = threading.Lock()
+        self.requests = deque(maxlen=max_size)
+        self.stats = {
+            "total_requests": 0,
+            "status_codes": {},
+            "paths": {},
+            "methods": {},
+        }
+
+    def log_request(self, method, path, status_code, response_time_ms, ip):
+        with self._lock:
+            entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "method": method,
+                "path": path,
+                "status": status_code,
+                "response_time_ms": round(response_time_ms, 2),
+                "ip": ip,
+            }
+            self.requests.append(entry)
+
+            self.stats["total_requests"] += 1
+            self.stats["status_codes"][str(status_code)] = self.stats["status_codes"].get(str(status_code), 0) + 1
+            self.stats["paths"][path] = self.stats["paths"].get(path, 0) + 1
+            self.stats["methods"][method] = self.stats["methods"].get(method, 0) + 1
+
+    def get_recent_requests(self, limit=50):
+        with self._lock:
+            return list(self.requests)[-limit:]
+
+    def get_stats(self):
+        with self._lock:
+            return dict(self.stats)
 
 
 class BotSupervisor:
@@ -32,6 +72,10 @@ class BotSupervisor:
         self.last_error: str | None = None
         self.last_error_time: datetime | None = None
         self.last_error_traceback: str | None = None
+
+        # Uptime tracking
+        self.uptime_checks = deque(maxlen=100)
+        self.last_health_check: datetime | None = None
 
     def start(self) -> None:
         with self._lock:
@@ -128,6 +172,31 @@ class BotSupervisor:
             while not self._stop_event.is_set() and not self._restart_event.is_set():
                 time.sleep(1.0)
 
+    def record_health_check(self, is_healthy: bool):
+        with self._lock:
+            self.last_health_check = datetime.now(timezone.utc)
+            self.uptime_checks.append({
+                "timestamp": self.last_health_check.isoformat(),
+                "healthy": is_healthy,
+            })
+
+    def get_uptime_percentage(self, minutes=60):
+        with self._lock:
+            if not self.uptime_checks:
+                return 100.0
+
+            cutoff = datetime.now(timezone.utc).timestamp() - (minutes * 60)
+            recent_checks = [
+                c for c in self.uptime_checks
+                if datetime.fromisoformat(c["timestamp"]).timestamp() > cutoff
+            ]
+
+            if not recent_checks:
+                return 100.0
+
+            healthy_count = sum(1 for c in recent_checks if c["healthy"])
+            return round((healthy_count / len(recent_checks)) * 100, 2)
+
     def get_telemetry(self) -> dict:
         with self._lock:
             now = datetime.now(timezone.utc)
@@ -150,28 +219,100 @@ class BotSupervisor:
                     "last_error": self.last_error,
                     "last_error_time": self.last_error_time.isoformat() if self.last_error_time else None,
                     "last_error_traceback": self.last_error_traceback,
+                    "last_health_check": self.last_health_check.isoformat() if self.last_health_check else None,
+                    "uptime_1h": self.get_uptime_percentage(60),
+                    "uptime_24h": self.get_uptime_percentage(1440),
                 },
             }
 
 
 supervisor = BotSupervisor()
+request_logger = RequestLogger()
 
 app = Flask(__name__, template_folder="templates")
+app.secret_key = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(32))
+
+# Admin credentials from environment
+ADMIN_LOGIN = os.getenv("ADM_LOGIN", "admin")
+ADMIN_PASSWORD = os.getenv("ADM_PASS", "admin")
 
 
-@app.route("/", methods=["GET", "HEAD"])
-def index():
-    if request.method == "HEAD":
-        telemetry = supervisor.get_telemetry()
-        is_healthy = telemetry["bot"]["is_running"] and telemetry["bot"]["status"] == "healthy"
-        return "", (200 if is_healthy else 503)
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get("authenticated"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated_function
 
-    if request.args.get("format") == "json" or request.accept_mimetypes.best == "application/json":
-        telemetry = supervisor.get_telemetry()
-        is_healthy = telemetry["bot"]["is_running"] and telemetry["bot"]["status"] == "healthy"
-        return jsonify(telemetry), (200 if is_healthy else 503)
 
-    return render_template("index.html")
+@app.before_request
+def log_request_start():
+    request.start_time = time.time()
+
+
+@app.after_request
+def log_request_end(response):
+    if hasattr(request, "start_time"):
+        response_time_ms = (time.time() - request.start_time) * 1000
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+
+        # Skip logging static assets
+        if not request.path.startswith(("/static", "/favicon")):
+            request_logger.log_request(
+                method=request.method,
+                path=request.path,
+                status_code=response.status_code,
+                response_time_ms=response_time_ms,
+                ip=ip,
+            )
+
+    return response
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
+
+        if username == ADMIN_LOGIN and password == ADMIN_PASSWORD:
+            session["authenticated"] = True
+            session["login_time"] = datetime.now(timezone.utc).isoformat()
+            return redirect(url_for("dashboard"))
+        else:
+            return render_template("login.html", error="Неверный логин или пароль")
+
+    if session.get("authenticated"):
+        return redirect(url_for("dashboard"))
+
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+@app.route("/")
+@login_required
+def dashboard():
+    return render_template("dashboard.html")
+
+
+@app.route("/api/analytics")
+@login_required
+def api_analytics():
+    stats = request_logger.get_stats()
+    recent_requests = request_logger.get_recent_requests(100)
+    telemetry = supervisor.get_telemetry()
+
+    return jsonify({
+        "telemetry": telemetry,
+        "request_stats": stats,
+        "recent_requests": recent_requests,
+    })
 
 
 @app.route("/health", methods=["GET", "HEAD"])
@@ -179,6 +320,9 @@ def health():
     telemetry = supervisor.get_telemetry()
     is_healthy = telemetry["bot"]["is_running"] and telemetry["bot"]["status"] == "healthy"
     status_code = 200 if is_healthy else 503
+
+    # Record health check
+    supervisor.record_health_check(is_healthy)
 
     if request.method == "HEAD":
         return "", status_code
@@ -190,6 +334,8 @@ def health():
         "restarts": telemetry["bot"]["restart_count"],
         "server_status": "online",
         "last_error": telemetry["bot"]["last_error"],
+        "uptime_1h": telemetry["bot"]["uptime_1h"],
+        "uptime_24h": telemetry["bot"]["uptime_24h"],
     }
     return jsonify(response_data), status_code
 
@@ -200,6 +346,7 @@ def api_status():
 
 
 @app.route("/api/restart", methods=["GET", "POST"])
+@login_required
 def api_restart():
     supervisor.trigger_restart()
     return jsonify({
@@ -300,25 +447,5 @@ def system_resources():
 def favicon():
     return "", 204
 
-
-def self_ping_loop():
-    """Периодически пингует /health, чтобы сервер не засыпал."""
-    logger.info("Self-ping loop started.")
-    base_url = os.getenv("SELF_PING_URL", "http://localhost:8000")
-    interval = int(os.getenv("SELF_PING_INTERVAL", "300"))  # 5 минут по умолчанию
-
-    while True:
-        time.sleep(interval)
-        try:
-            url = f"{base_url}/health"
-            response = requests.get(url, timeout=10)
-            logger.debug(f"Self-ping /health: {response.status_code}")
-        except Exception as e:
-            logger.warning(f"Self-ping failed: {e}")
-
-
-# Запуск self-ping в отдельном потоке
-self_ping_thread = threading.Thread(target=self_ping_loop, name="SelfPing", daemon=True)
-self_ping_thread.start()
 
 supervisor.start()
