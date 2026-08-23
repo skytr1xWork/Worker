@@ -562,7 +562,7 @@ async def process_article_url(message: Message, state: FSMContext) -> None:
         )
         return
 
-    status_msg = await message.answer("Создание выжимки...")
+    status_msg = await message.answer("Создание выжимки...\nСоздание может занять до пары минут, зависит от сервиса и размера статьи.")
 
     try:
         # Инициализируем AI сервис и создаём выжимку
