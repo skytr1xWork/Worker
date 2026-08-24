@@ -206,6 +206,13 @@ VIDEO_MIME_TYPES = {
     "video/ogg": "OGV",
 }
 
+_EXTENSION_MAP: dict[str, tuple[str, str]] = {
+    **{k: ("video", v) for k, v in VIDEO_EXTENSIONS.items()},
+    **{k: ("audio", v) for k, v in AUDIO_EXTENSIONS.items()},
+    **{k: ("image", v) for k, v in IMAGE_EXTENSIONS.items()},
+    **{k: ("document", v) for k, v in DOCUMENT_EXTENSIONS.items()},
+}
+
 
 def normalize_format(fmt: str) -> str:
     if not fmt:
@@ -261,15 +268,8 @@ def calculate_timeout(operation: str, file_size_bytes: int) -> int:
 def detect_file_type(filename: str | None = None, mime_type: str | None = None) -> tuple[str | None, str | None]:
     ext = os.path.splitext(filename)[1].lower().lstrip(".") if filename else ""
 
-    EXTENSION_MAP = {
-        **{k: ("video", v) for k, v in VIDEO_EXTENSIONS.items()},
-        **{k: ("audio", v) for k, v in AUDIO_EXTENSIONS.items()},
-        **{k: ("image", v) for k, v in IMAGE_EXTENSIONS.items()},
-        **{k: ("document", v) for k, v in DOCUMENT_EXTENSIONS.items()},
-    }
-
-    if ext in EXTENSION_MAP:
-        return EXTENSION_MAP[ext]
+    if ext in _EXTENSION_MAP:
+        return _EXTENSION_MAP[ext]
 
     if not mime_type:
         return None, None
@@ -324,11 +324,6 @@ def detect_file_type(filename: str | None = None, mime_type: str | None = None) 
             return "document", fmt
 
     return None, None
-
-
-def detect_image_format(filename: str | None = None, mime_type: str | None = None) -> str | None:
-    cat, fmt = detect_file_type(filename, mime_type)
-    return fmt if cat == "image" else None
 
 
 def format_size(size_bytes: int) -> str:

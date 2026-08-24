@@ -1,5 +1,4 @@
 import asyncio
-import gc
 import io
 import json
 import logging
@@ -7,15 +6,10 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.request
 from PIL import Image
-
-for p in ("/usr/lib/python3.14/site-packages", "/usr/lib/python3/dist-packages", "/usr/local/lib/python3.14/dist-packages"):
-    if os.path.isdir(p) and p not in sys.path:
-        sys.path.append(p)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +56,11 @@ def ttl_lru_cache(ttl_seconds=300, maxsize=128):
 
         return wrapper
     return decorator
+
+
+def safe_filename(title: str | None, fallback: str = "file") -> str:
+    cleaned = re.sub(r'[\\/*?:"<>|]', "", title or "")[:40].strip()
+    return cleaned or fallback
 
 SUPPORTED_SERVICES = {
     "pinterest": {
@@ -254,7 +253,7 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
         video_url = p_media.get("video_url")
         image_url = p_media.get("image_url")
         raw_title = p_media.get("title") or "pinterest"
-        safe_title = re.sub(r'[\\/*?:"<>|]', '', raw_title)[:40].strip() or "pinterest"
+        safe_title = safe_filename(raw_title, "pinterest")
 
         if target_format == "PNG":
             img_target = image_url or video_url
@@ -332,7 +331,7 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
                 with Image.open(thumb_files[0]) as img:
                     img.save(out_png, format="PNG")
                 meta = get_url_metadata(url)
-                safe_title = re.sub(r'[\\/*?:"<>|]', '', meta.get("title", "image"))[:40].strip() or "image"
+                safe_title = safe_filename(meta.get("title"), "image")
                 return out_png, "png", f"{safe_title}.png", os.path.getsize(out_png)
             except Exception:
                 pass
@@ -346,7 +345,7 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
             with urllib.request.urlopen(req, timeout=15) as resp:
                 with Image.open(resp) as img:
                     img.save(out_png, format="PNG")
-            safe_title = re.sub(r'[\\/*?:"<>|]', '', meta.get("title", "image"))[:40].strip() or "image"
+            safe_title = safe_filename(meta.get("title"), "image")
             return out_png, "png", f"{safe_title}.png", os.path.getsize(out_png)
 
         raise RuntimeError("Не удалось извлечь изображение по ссылке")
@@ -368,7 +367,7 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
             if f.endswith(".mp3"):
                 full_p = os.path.join(output_dir, f)
                 meta = get_url_metadata(url)
-                safe_title = re.sub(r'[\\/*?:"<>|]', '', meta.get("title", "audio"))[:40].strip() or "audio"
+                safe_title = safe_filename(meta.get("title"), "audio")
                 return full_p, "mp3", f"{safe_title}.mp3", os.path.getsize(full_p)
 
         error_msg = res.stderr.strip() if res.stderr else "Неизвестная ошибка"
@@ -417,13 +416,5 @@ def download_url_to_file(url: str, target_format: str, output_dir: str) -> tuple
 
         result_path = final_mp4 if (os.path.exists(final_mp4) and os.path.getsize(final_mp4) > 0) else raw_video_path
         meta = get_url_metadata(url)
-        safe_title = re.sub(r'[\\/*?:"<>|]', '', meta.get("title", "video"))[:40].strip() or "video"
+        safe_title = safe_filename(meta.get("title"), "video")
         return result_path, "mp4", f"{safe_title}.mp4", os.path.getsize(result_path)
-
-
-def download_url_media(url: str, target_format: str) -> tuple[bytes, str, str]:
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        path, ext, title, _ = download_url_to_file(url, target_format, tmp_dir)
-        with open(path, "rb") as f:
-            data = f.read()
-        return data, ext, title

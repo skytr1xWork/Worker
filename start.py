@@ -8,6 +8,7 @@ from collections import deque
 from datetime import datetime, timezone
 from functools import wraps
 from itertools import islice
+from pathlib import Path
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
@@ -444,8 +445,6 @@ def system_resources():
 @ttl_cache(seconds=5)
 def _get_system_resources_cached():
     """Cached system resources to avoid expensive I/O operations."""
-    from pathlib import Path
-
     # Try to read cgroup v2 memory limit (Docker/Kubernetes)
     cgroup_mem_limit = None
     cgroup_mem_usage = None

@@ -16,6 +16,8 @@ from enum import IntEnum
 from math import exp, sqrt
 from typing import Dict, List, Optional
 
+from src.services.url_converter import get_ytdlp_cmd, get_common_ytdlp_args
+
 logger = logging.getLogger(__name__)
 
 DATA_URI_PREFIX = "data:audio/vnd.shazam.sig;base64,"
@@ -363,42 +365,23 @@ def query_shazam_api(signature_uri: str) -> dict | None:
 
 
 def extract_audio_pcm_from_url(url: str) -> Optional[bytes]:
-    from url_converter import get_ytdlp_cmd
-
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_audio = os.path.join(tmp_dir, "snippet.mp3")
 
-        cmd = get_ytdlp_cmd() + [
-            "--no-check-certificates",
-            "--geo-bypass",
-            "--user-agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "--no-warnings",
+        base_args = get_common_ytdlp_args() + [
             "-f", "bestaudio/best",
             "--extract-audio",
             "--audio-format", "mp3",
             "--audio-quality", "5",
-            "--download-sections", "*00:00:00-00:00:10",
             "--no-playlist",
             "-o", temp_audio,
             url,
         ]
+
+        cmd = get_ytdlp_cmd() + ["--download-sections", "*00:00:00-00:00:10"] + base_args
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=40)
         if not (res.returncode == 0 and os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 0):
-            fallback_cmd = get_ytdlp_cmd() + [
-                "--no-check-certificates",
-                "--geo-bypass",
-                "--user-agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "--no-warnings",
-                "-f", "bestaudio/best",
-                "--extract-audio",
-                "--audio-format", "mp3",
-                "--audio-quality", "5",
-                "--no-playlist",
-                "-o", temp_audio,
-                url,
-            ]
+            fallback_cmd = get_ytdlp_cmd() + base_args
             res2 = subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=40)
             if not (res2.returncode == 0 and os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 0):
                 return None

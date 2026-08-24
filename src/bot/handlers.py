@@ -1,5 +1,4 @@
 import asyncio
-import gc
 import io
 import logging
 import os
@@ -57,6 +56,70 @@ from src.services.url_converter import (
 logger = logging.getLogger(__name__)
 
 router = Router(name="main_router")
+
+_CONVERTER_FILE_PROMPT = (
+    "Отправь мне файл (картинку, документ, аудио или видео):\n"
+    "• Картинки: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
+    "• Документы/текст: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
+    "• Аудио: MP3, WAV, OGG, OPUS (Голосовые сообщения), FLAC, AAC, M4A, WMA, AIFF, AMR, AC3, MP2\n"
+    "• Видео: MP4, MOV, WEBM, AVI, MKV, GIF, FLV, WMV, 3GP, TS, MPEG, OGV\n\n"
+    "Обязательно без сжатия."
+)
+
+_SHAZAM_PROMPT = "Отправь ссылку на TikTok и я найду тебе музыку. (еще в тесте:3)"
+
+
+def get_admin_ids() -> set[int]:
+    raw = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or os.getenv("OWNER_ID") or ""
+    ids = set()
+    for chunk in re.split(r'[,\s;]+', raw.strip()):
+        if chunk.isdigit() or (chunk.startswith("-") and chunk[1:].isdigit()):
+            ids.add(int(chunk))
+    return ids
+
+
+ADMIN_IDS: set[int] = get_admin_ids()
+
+_ai_service_instance: AIService | None = None
+
+
+def _get_ai_service() -> AIService:
+    global _ai_service_instance
+    if _ai_service_instance is None:
+        _ai_service_instance = AIService()
+    return _ai_service_instance
+
+
+async def _send_converted_file(
+    msg: Message,
+    file,
+    fmt: str,
+    caption: str,
+    keyboard,
+    audio_title: str | None = None,
+) -> None:
+    try:
+        if fmt in ("MP4", "MOV", "WEBM", "MKV", "AVI"):
+            await msg.answer_video(video=file, caption=caption, reply_markup=keyboard, parse_mode="Markdown")
+            return
+        if fmt == "GIF":
+            await msg.answer_animation(animation=file, caption=caption, reply_markup=keyboard, parse_mode="Markdown")
+            return
+        if fmt == "OPUS":
+            await msg.answer_voice(voice=file, caption=caption, reply_markup=keyboard, parse_mode="Markdown")
+            return
+        if fmt in SUPPORTED_AUDIO_FORMATS:
+            kwargs: dict = dict(audio=file, caption=caption, reply_markup=keyboard, parse_mode="Markdown")
+            if audio_title:
+                kwargs["title"] = audio_title
+            await msg.answer_audio(**kwargs)
+            return
+        if fmt == "PNG":
+            await msg.answer_photo(photo=file, caption=caption, reply_markup=keyboard, parse_mode="Markdown")
+            return
+    except Exception:
+        pass
+    await msg.answer_document(document=file, caption=caption, reply_markup=keyboard, parse_mode="Markdown")
 
 HELP_TEXTS = {
     "converter": (
@@ -146,15 +209,6 @@ async def track_user_middleware(handler, event: Message, data):
             first_name=event.from_user.first_name,
         )
     return await handler(event, data)
-
-
-def get_admin_ids() -> set[int]:
-    raw = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or os.getenv("OWNER_ID") or ""
-    ids = set()
-    for chunk in re.split(r'[,\s;]+', raw.strip()):
-        if chunk.isdigit() or (chunk.startswith("-") and chunk[1:].isdigit()):
-            ids.add(int(chunk))
-    return ids
 
 
 class ConverterState(StatesGroup):
@@ -271,20 +325,10 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 @router.message(Command("convert"))
 @router.message(Command("converter"))
 @router.message(F.text == "Конвертер")
-@router.message(F.text.lower() == "конвертер")
 async def start_converter_mode(message: Message, state: FSMContext) -> None:
     await state.set_state(ConverterState.waiting_for_file)
-    prompt_text = (
-        "Отправь мне файл (картинку, документ, аудио или видео):\n"
-        "• Картинки: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
-        "• Документы/текст: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
-        "• Аудио: MP3, WAV, OGG, OPUS (Голосовые сообщения), FLAC, AAC, M4A, WMA, AIFF, AMR, AC3, MP2\n"
-        "• Видео: MP4, MOV, WEBM, AVI, MKV, GIF, FLV, WMV, 3GP, TS, MPEG, OGV\n\n"
-        "Обязательно без сжатия.\n"
-        "Сообщение каждого формата должно быть меньше 20 мб. Но если вы меня поддержите (не намек) то можно будет открыть свой впс и отправлять файлы больше :DDD"
-    )
     await message.answer(
-        prompt_text,
+        _CONVERTER_FILE_PROMPT,
         reply_markup=get_cancel_keyboard(),
     )
 
@@ -292,7 +336,6 @@ async def start_converter_mode(message: Message, state: FSMContext) -> None:
 @router.message(Command("url"))
 @router.message(Command("convert_url"))
 @router.message(F.text == "Конвертер (из ссылки)")
-@router.message(F.text.lower() == "конвертер (из ссылки)")
 async def start_url_converter_mode(message: Message, state: FSMContext) -> None:
     await state.set_state(UrlConverterState.waiting_for_url)
     prompt_text = (
@@ -312,21 +355,17 @@ async def start_url_converter_mode(message: Message, state: FSMContext) -> None:
 
 @router.message(Command("qr"))
 @router.message(F.text == "Управление QR")
-@router.message(F.text.lower() == "управление qr")
 async def start_qr_mode(message: Message, state: FSMContext) -> None:
     await state.set_state(QRState.waiting_for_input)
-    prompt_text = (
-        "Отправьте ссылку или текст для создания QR-кода, "
-        "либо отправьте изображение с QR-кодом для его чтения."
-    )
     await message.answer(
-        prompt_text,
+        "Отправьте ссылку или текст для создания QR-кода, "
+        "либо отправьте изображение с QR-кодом для его чтения.",
         reply_markup=get_cancel_keyboard(),
     )
 
 
 @router.message(QRState.waiting_for_input, F.photo)
-async def handle_qr_photo(message: Message, state: FSMContext, bot: Bot) -> None:
+async def handle_qr_photo(message: Message, bot: Bot) -> None:
     if not message.photo:
         return
 
@@ -347,12 +386,11 @@ async def handle_qr_photo(message: Message, state: FSMContext, bot: Bot) -> None
     await message.answer(
         f"Содержимое QR-кода:\n\n{decoded_content}",
         reply_markup=get_qr_done_keyboard(),
-        disable_web_page_preview=False,
     )
 
 
 @router.message(QRState.waiting_for_input, F.document)
-async def handle_qr_document(message: Message, state: FSMContext, bot: Bot) -> None:
+async def handle_qr_document(message: Message, bot: Bot) -> None:
     doc = message.document
     if not doc:
         return
@@ -373,7 +411,6 @@ async def handle_qr_document(message: Message, state: FSMContext, bot: Bot) -> N
     await message.answer(
         f"Содержимое QR-кода:\n\n{decoded_content}",
         reply_markup=get_qr_done_keyboard(),
-        disable_web_page_preview=False,
     )
 
 
@@ -421,12 +458,10 @@ async def handle_help_callback(callback: CallbackQuery) -> None:
 
 @router.message(Command("shazam"))
 @router.message(F.text == "Шазам (TikTok)")
-@router.message(F.text.lower() == "шазам (tiktok)")
-@router.message(F.text.lower() == "шазам")
 async def start_shazam_mode(message: Message, state: FSMContext) -> None:
     await state.set_state(UrlConverterState.waiting_for_shazam_url)
     await message.answer(
-        "Отправь ссылку на TikTok и я найду тебе музыку. (еще в тесте:3)",
+        _SHAZAM_PROMPT,
         reply_markup=get_cancel_keyboard(),
         parse_mode="Markdown",
     )
@@ -520,7 +555,6 @@ async def process_shazam_for_url(event: Message | CallbackQuery, url: str, state
                 text_result,
                 reply_markup=get_shazam_done_keyboard(),
                 parse_mode="Markdown",
-                disable_web_page_preview=False,
             )
 
         except Exception as exc:
@@ -530,8 +564,6 @@ async def process_shazam_for_url(event: Message | CallbackQuery, url: str, state
                 f"Попробуйте отправить ссылку заново или скачать в MP3.",
                 reply_markup=get_shazam_done_keyboard(),
             )
-        finally:
-            gc.collect()
 
 
 @router.message(Command("summary"))
@@ -566,7 +598,7 @@ async def process_article_url(message: Message, state: FSMContext) -> None:
 
     try:
         # Инициализируем AI сервис и создаём выжимку
-        ai_service = AIService()
+        ai_service = _get_ai_service()
         summary = await ai_service.summarize_from_url(url)
 
         # Отправляем результат
@@ -701,7 +733,7 @@ async def process_media_file(
     current_st = await state.get_state()
 
     if current_st == QRState.waiting_for_input and media_type == "document":
-        await handle_qr_document(message, state, message.bot)
+        await handle_qr_document(message, message.bot)
         return
 
     if file_size and file_size > 20 * 1024 * 1024:
@@ -775,21 +807,8 @@ async def handle_video(message: Message, state: FSMContext) -> None:
     video = message.video
     if not video:
         return
-
-    detected_format = "MP4"
-    if video.file_name:
-        ext = os.path.splitext(video.file_name)[1].lower().lstrip(".")
-        if ext in VIDEO_EXTENSIONS:
-            detected_format = VIDEO_EXTENSIONS[ext]
-    elif video.mime_type:
-        for m_k, f_v in VIDEO_MIME_TYPES.items():
-            if m_k in video.mime_type.lower():
-                detected_format = f_v
-                break
-
-    file_name = video.file_name or f"video.{detected_format.lower()}"
     await process_media_file(
-        message, state, video.file_id, file_name, video.file_size, video.mime_type, "video"
+        message, state, video.file_id, video.file_name or "video.mp4", video.file_size, video.mime_type or "video/mp4", "video"
     )
 
 
@@ -808,11 +827,8 @@ async def handle_animation(message: Message, state: FSMContext) -> None:
     anim = message.animation
     if not anim:
         return
-
-    file_name = anim.file_name or "animation.mp4"
-    detected_format = "GIF" if anim.mime_type == "image/gif" else "MP4"
     await process_media_file(
-        message, state, anim.file_id, file_name, anim.file_size, anim.mime_type, "animation"
+        message, state, anim.file_id, anim.file_name or "animation.mp4", anim.file_size, anim.mime_type, "animation"
     )
 
 
@@ -821,21 +837,8 @@ async def handle_audio(message: Message, state: FSMContext) -> None:
     audio = message.audio
     if not audio:
         return
-
-    detected_format = "MP3"
-    if audio.file_name:
-        ext = os.path.splitext(audio.file_name)[1].lower().lstrip(".")
-        if ext in AUDIO_EXTENSIONS:
-            detected_format = AUDIO_EXTENSIONS[ext]
-    elif audio.mime_type:
-        for m_k, f_v in AUDIO_MIME_TYPES.items():
-            if m_k in audio.mime_type.lower():
-                detected_format = f_v
-                break
-
-    file_name = audio.file_name or f"audio.{detected_format.lower()}"
     await process_media_file(
-        message, state, audio.file_id, file_name, audio.file_size, audio.mime_type, "audio"
+        message, state, audio.file_id, audio.file_name or "audio.mp3", audio.file_size, audio.mime_type or "audio/mpeg", "audio"
     )
 
 
@@ -854,7 +857,7 @@ async def handle_photo(message: Message, state: FSMContext) -> None:
     current_st = await state.get_state()
 
     if current_st == QRState.waiting_for_input:
-        await handle_qr_photo(message, state, message.bot)
+        await handle_qr_photo(message, message.bot)
         return
 
     await message.answer(
@@ -942,51 +945,13 @@ async def handle_url_conversion_callback(callback: CallbackQuery, state: FSMCont
                 )
 
                 if callback.message:
-                    if target_format == "MP4":
-                        try:
-                            await callback.message.answer_video(
-                                video=output_file,
-                                caption=caption,
-                                reply_markup=get_url_done_keyboard(),
-                                parse_mode="Markdown",
-                            )
-                        except Exception:
-                            await callback.message.answer_document(
-                                document=output_file,
-                                caption=caption,
-                                reply_markup=get_url_done_keyboard(),
-                                parse_mode="Markdown",
-                            )
-                    elif target_format == "MP3":
-                        try:
-                            await callback.message.answer_audio(
-                                audio=output_file,
-                                caption=caption,
-                                reply_markup=get_url_done_keyboard(),
-                                parse_mode="Markdown",
-                            )
-                        except Exception:
-                            await callback.message.answer_document(
-                                document=output_file,
-                                caption=caption,
-                                reply_markup=get_url_done_keyboard(),
-                                parse_mode="Markdown",
-                            )
-                    elif target_format == "PNG":
-                        try:
-                            await callback.message.answer_photo(
-                                photo=output_file,
-                                caption=caption,
-                                reply_markup=get_url_done_keyboard(),
-                                parse_mode="Markdown",
-                            )
-                        except Exception:
-                            await callback.message.answer_document(
-                                document=output_file,
-                                caption=caption,
-                                reply_markup=get_url_done_keyboard(),
-                                parse_mode="Markdown",
-                            )
+                    await _send_converted_file(
+                        callback.message,
+                        output_file,
+                        target_format,
+                        caption,
+                        get_url_done_keyboard(),
+                    )
 
         except Exception as exc:
             logger.exception("Error during URL conversion")
@@ -996,8 +961,6 @@ async def handle_url_conversion_callback(callback: CallbackQuery, state: FSMCont
                     f"Проверьте доступность ссылки или попробуйте другой формат.",
                     reply_markup=get_main_keyboard(),
                 )
-        finally:
-            gc.collect()
 
 
 @router.callback_query(F.data == "shazam:new_url")
@@ -1006,10 +969,11 @@ async def handle_shazam_new_url(callback: CallbackQuery, state: FSMContext) -> N
     await state.set_state(UrlConverterState.waiting_for_shazam_url)
     if callback.message:
         await callback.message.answer(
-            "Отправь ссылку на TikTok и я найду тебе музыку. (еще в тесте:3)",
+            _SHAZAM_PROMPT,
             reply_markup=get_cancel_keyboard(),
             parse_mode="Markdown",
         )
+
 
 
 @router.callback_query(F.data.startswith("conv:"))
@@ -1028,12 +992,7 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
         await state.set_state(ConverterState.waiting_for_file)
         if callback.message:
             await callback.message.answer(
-                "Отправь мне файл (картинку, документ, аудио или видео):\n"
-                "• Картинки: PNG, JPG, WEBP, BMP, TIFF, ICO, GIF\n"
-                "• Текст/документы: TXT, DOCX, MD, CSV, DAT, JSON, XML, LOG, TSV, HTML\n"
-                "• Аудио: MP3, WAV, OGG, OPUS, FLAC, AAC, M4A, WMA, AIFF, AMR, AC3, MP2\n"
-                "• Видео: MP4, MOV, WEBM, AVI, MKV, GIF, FLV, WMV, 3GP, TS, MPEG, OGV\n"
-                "Обязательно без сжатия.",
+                _CONVERTER_FILE_PROMPT,
                 reply_markup=get_cancel_keyboard(),
             )
         return
@@ -1097,74 +1056,14 @@ async def handle_conversion_callback(callback: CallbackQuery, state: FSMContext,
         )
 
         if callback.message:
-            if target_format in ("MP4", "MOV", "WEBM", "MKV", "AVI"):
-                try:
-                    await callback.message.answer_video(
-                        video=output_file,
-                        caption=caption,
-                        reply_markup=get_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-                except Exception:
-                    await callback.message.answer_document(
-                        document=output_file,
-                        caption=caption,
-                        reply_markup=get_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-            elif target_format == "GIF":
-                try:
-                    await callback.message.answer_animation(
-                        animation=output_file,
-                        caption=caption,
-                        reply_markup=get_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-                except Exception:
-                    await callback.message.answer_document(
-                        document=output_file,
-                        caption=caption,
-                        reply_markup=get_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-            elif target_format == "OPUS":
-                try:
-                    await callback.message.answer_voice(
-                        voice=output_file,
-                        caption=caption,
-                        reply_markup=get_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-                except Exception:
-                    await callback.message.answer_document(
-                        document=output_file,
-                        caption=caption,
-                        reply_markup=get_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-            elif target_format in SUPPORTED_AUDIO_FORMATS:
-                try:
-                    await callback.message.answer_audio(
-                        audio=output_file,
-                        caption=caption,
-                        title=base_name,
-                        reply_markup=get_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-                except Exception:
-                    await callback.message.answer_document(
-                        document=output_file,
-                        caption=caption,
-                        reply_markup=get_done_keyboard(),
-                        parse_mode="Markdown",
-                    )
-            else:
-                await callback.message.answer_document(
-                    document=output_file,
-                    caption=caption,
-                    reply_markup=get_done_keyboard(),
-                    parse_mode="Markdown",
-                )
+            await _send_converted_file(
+                callback.message,
+                output_file,
+                target_format,
+                caption,
+                get_done_keyboard(),
+                audio_title=base_name,
+            )
 
     except Exception as exc:
         logger.exception("Error during conversion")
@@ -1197,15 +1096,15 @@ async def cmd_broadcast_start(message: Message, state: FSMContext) -> None:
     if not message.from_user:
         return
 
-    admin_ids = get_admin_ids()
+    admin_ids = ADMIN_IDS
     if not admin_ids or message.from_user.id not in admin_ids:
         return
 
     await state.clear()
     total_users = db.get_users_count()
     await message.answer(
-        f"📢 **Панель рассылки сообщений**\n\n"
-        f"👥 Зарегистрировано пользователей в базе: **{total_users}**\n\n"
+        f"**Панель рассылки сообщений**\n\n"
+        f"Зарегистрировано пользователей в базе: **{total_users}**\n\n"
         f"Выберите тип рассылки:",
         reply_markup=get_broadcast_type_keyboard(),
         parse_mode="Markdown",
@@ -1214,7 +1113,7 @@ async def cmd_broadcast_start(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("broadcast:"))
 async def handle_broadcast_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    admin_ids = get_admin_ids()
+    admin_ids = ADMIN_IDS
     if not callback.from_user or callback.from_user.id not in admin_ids:
         await callback.answer("У вас нет доступа", show_alert=True)
         return
@@ -1253,7 +1152,7 @@ async def handle_broadcast_callback(callback: CallbackQuery, state: FSMContext) 
 
 @router.message(BroadcastState.waiting_for_recipients)
 async def handle_broadcast_recipients_input(message: Message, state: FSMContext) -> None:
-    admin_ids = get_admin_ids()
+    admin_ids = ADMIN_IDS
     if not message.from_user or message.from_user.id not in admin_ids:
         return
 
@@ -1323,7 +1222,7 @@ async def send_message_batch(bot: Bot, message: Message, user_ids: list[int], ba
 
 @router.message(BroadcastState.waiting_for_message)
 async def handle_broadcast_message_input(message: Message, state: FSMContext, bot: Bot) -> None:
-    admin_ids = get_admin_ids()
+    admin_ids = ADMIN_IDS
     if not message.from_user or message.from_user.id not in admin_ids:
         return
 
@@ -1347,8 +1246,8 @@ async def handle_broadcast_message_input(message: Message, state: FSMContext, bo
 
     total_users = len(user_ids)
     status_msg = await message.answer(
-        f"⏳ **Начинаю рассылку...**\n"
-        f"👥 Получателей: {total_users}\n"
+        f"**Начинаю рассылку...**\n"
+        f"Получателей: {total_users}\n"
         f"Пожалуйста, подождите завершения отправки.",
         parse_mode="Markdown",
     )
@@ -1358,11 +1257,11 @@ async def handle_broadcast_message_input(message: Message, state: FSMContext, bo
     )
 
     await message.answer(
-        f"📢 **Рассылка успешно завершена!**\n\n"
-        f"👥 Всего получателей: **{total_users}**\n"
-        f"✅ Успешно доставлено: **{success_count}**\n"
-        f"🚫 Заблокировали бота: **{blocked_count}**\n"
-        f"❌ Прочие ошибки: **{failed_count - blocked_count}**",
+        f"**Рассылка успешно завершена!**\n\n"
+        f"Всего получателей: **{total_users}**\n"
+        f"Успешно доставлено: **{success_count}**\n"
+        f"Заблокировали бота: **{blocked_count}**\n"
+        f"Прочие ошибки: **{failed_count - blocked_count}**",
         reply_markup=get_main_keyboard(),
         parse_mode="Markdown",
     )

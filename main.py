@@ -8,6 +8,8 @@ from src.bot.handlers import router as main_router
 
 TOKEN = os.getenv("BOT_TOKEN", "")
 
+logger = logging.getLogger(__name__)
+
 
 def main() -> None:
     if not TOKEN:
@@ -17,7 +19,7 @@ def main() -> None:
     bot = Bot(token=TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(main_router)
-    print("Бот-конвертер запущен...")
+    logger.info("Бот-конвертер запущен...")
     dp.run_polling(bot, handle_signals=False)
 
 

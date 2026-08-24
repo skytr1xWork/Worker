@@ -2,7 +2,7 @@ import logging
 import os
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,8 @@ def get_connection() -> sqlite3.Connection:
 
 def init_db() -> None:
     with get_connection() as conn:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -33,7 +35,7 @@ def init_db() -> None:
 
 def add_user(user_id: int, username: str | None = None, first_name: str | None = None) -> None:
     try:
-        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         with get_connection() as conn:
             conn.execute(
                 """
